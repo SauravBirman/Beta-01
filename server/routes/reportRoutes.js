@@ -7,7 +7,7 @@ const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage() });
 
 router.post('/upload', auth, upload.single('file'), uploadReport);
-router.post('/grant', auth, grantAccess);
+router.post('/grant', auth,  grantAccess);
 router.get('/:reportId/download', auth, accessReport);
 
 module.exports = router;
