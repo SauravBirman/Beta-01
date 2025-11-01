@@ -1,37 +1,46 @@
-let client;
+import axios from 'axios';
+import FormData from 'form-data';
+import fs from 'fs';
+import path from 'path';
+import dotenv from 'dotenv';
+dotenv.config();
 
-async function getClient() {
-  if (!client) {
-    const { create } = await import('ipfs-http-client');
-    client = create({ url: 'https://ipfs.infura.io:5001/api/v0' });
-  }
-  return client;
-}
+const PINATA_API_KEY = process.env.PINATA_API_KEY;
+const PINATA_SECRET_API_KEY = process.env.PINATA_API_SECRET;
 
 async function uploadFile(fileBuffer, fileName) {
   try {
-    const ipfs = await getClient();
-    const result = await ipfs.add({ path: fileName, content: fileBuffer });
-    return result.cid.toString();
+    const url = `https://api.pinata.cloud/pinning/pinFileToIPFS`;
+
+    const formData = new FormData();
+    formData.append('file', fileBuffer, fileName);
+
+    const res = await axios.post(url, formData, {
+      maxBodyLength: Infinity,
+      headers: {
+        'Content-Type': `multipart/form-data; boundary=${formData._boundary}`,
+        pinata_api_key: PINATA_API_KEY,
+        pinata_secret_api_key: PINATA_SECRET_API_KEY
+      }
+    });
+
+    // The hash of the uploaded file
+    return res.data.IpfsHash;
   } catch (err) {
-    console.error('❌ IPFS upload error:', err);
+    console.error('❌ Pinata upload error:', err.response?.data || err);
     throw err;
   }
 }
 
 async function getFile(ipfsHash) {
   try {
-    const ipfs = await getClient();
-    const stream = ipfs.cat(ipfsHash);
-    let data = [];
-    for await (const chunk of stream) {
-      data.push(chunk);
-    }
-    return Buffer.concat(data);
+    const url = `https://gateway.pinata.cloud/ipfs/${ipfsHash}`;
+    const res = await axios.get(url, { responseType: 'arraybuffer' });
+    return Buffer.from(res.data);
   } catch (err) {
-    console.error('❌ IPFS get file error:', err);
+    console.error('❌ Pinata get file error:', err.response?.data || err);
     throw err;
   }
 }
 
-module.exports = { uploadFile, getFile };
+export { uploadFile, getFile };
