@@ -1,8 +1,8 @@
-import "@nomiclabs/hardhat-waffle";
-import "dotenv/config";
+require("@nomiclabs/hardhat-waffle");
+require("dotenv").config();
 
-export default {
-  solidity: "0.8.20",
+module.exports = {
+  solidity: "0.8.28",
   networks: {
     sepolia: {
       url: process.env.RPC_URL,

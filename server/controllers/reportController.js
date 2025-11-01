@@ -40,7 +40,8 @@ const uploadReport = async (req, res) => {
       permissions: [], // initially no doctors
     });
 
-    // Register report on blockchain
+    // Register report on blockchainnpm install --save-dev @nomiclabs/hardhat-waffle ethereum-waffle @nomiclabs/hardhat-ethers ethers dotenv
+
     const tx = await contract.registerReport(ipfsHash); // patient is msg.sender automatically
     await tx.wait(); // Wait until transaction is mined
     

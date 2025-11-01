@@ -3,7 +3,7 @@ const fs = require("fs");
 const path = require("path");
 
 async function main() {
-  const ReportContract = await hre.ethers.getContractFactory("ReportContract");
+  const ReportContract = await hre.ethers.getContractFactory("ReportAccess");
   const contract = await ReportContract.deploy();
   await contract.deployed();
 

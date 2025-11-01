@@ -1,0 +1,41 @@
+{
+  "_format": "hh-sol-cache-2",
+  "files": {
+    "C:\\Users\\yuvra\\Desktop\\Hack\\Beta-01\\server\\blockchain\\contracts\\reportContract.sol": {
+      "lastModificationDate": 1762006405267,
+      "contentHash": "51d4bbf3e1bbbb31e2922fee8f13d773",
+      "sourceName": "contracts/reportContract.sol",
+      "solcConfig": {
+        "version": "0.8.28",
+        "settings": {
+          "evmVersion": "paris",
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        "^0.8.0"
+      ],
+      "artifacts": [
+        "ReportAccess"
+      ]
+    }
+  }
+}
