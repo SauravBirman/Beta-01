@@ -15,7 +15,7 @@ async function main() {
     abi: JSON.parse(contract.interface.format("json")), 
   };
 
-    const abiPath = path.join(__dirname, "../config/ReportContractABI.json");
+    const abiPath = path.join(__dirname, "../../config/ReportContractABI.json");
   fs.writeFileSync(abiPath, JSON.stringify(contractData, null, 2));
 
   console.log("ABI and address saved to:", abiPath);
