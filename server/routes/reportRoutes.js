@@ -8,6 +8,6 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 router.post('/upload', auth, upload.single('file'), uploadReport);
 router.post('/grant', auth, grantAccess);
-router.get('/:reportId/download', auth, downloadReport);
+router.get('/:reportId/download', auth, accessReport);
 
 module.exports = router;

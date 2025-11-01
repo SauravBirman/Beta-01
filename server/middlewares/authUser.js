@@ -2,7 +2,7 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/userModel');
 const { JWT_SECRET } = require('../config/app');
 
-const authMiddleware = async (req, res, next) => {
+const auth = async (req, res, next) => {
   try {
     // 1. Get token from Authorization header
     const authHeader = req.headers.authorization;
@@ -33,4 +33,4 @@ const authMiddleware = async (req, res, next) => {
   }
 };
 
-module.exports = authMiddleware;
+module.exports = auth;

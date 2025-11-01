@@ -10,7 +10,7 @@ const connectDB = require('./config/mongoose-connection');
 // Routes
 // const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
-const { protect } = require('./middlewares/authUser');
+const  auth  = require('./middlewares/authUser');
 const reportRoutes = require('./routes/reportRoutes');
 const path = require('path');
  
@@ -29,7 +29,7 @@ connectDB();
 
 app.use(express.json()); 
 app.use('/api/users', userRoutes);
-app.use('/api/reports', protect, reportRoutes);
+app.use('/api/reports', auth, reportRoutes);
 
 app.get('/', (req, res) => {
   res.send('Welcome to the API');

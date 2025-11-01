@@ -1,14 +1,18 @@
 const Report = require('../models/reportModel');
 const { uploadFile, getFile } = require('../utils/ipfs');
-const { ethers } = require('ethers');
+const ethers = require('ethers');
 const fs = require('fs');
 const path = require('path');
+require('dotenv').config();
 
+console.log('RPC_URL:', process.env.RPC_URL);
+console.log('PRIVATE_KEY:', process.env.PRIVATE_KEY ? 'loaded' : 'missing');
+console.log('CONTRACT_ADDRESS:', process.env.CONTRACT_ADDRESS);
 
-const { contract } = require('../blockchain/contract');  
 
 // Example: smart contract setup
-const contractABI = require('../config/ReportContractABI.json');
+const contractJSON = require('../config/ReportContractABI.json');
+const contractABI = contractJSON.abi;
 const contractAddress = process.env.CONTRACT_ADDRESS;
 
 // provider → connects to blockchain network (testnet or local Hardhat/Alchemy).
@@ -16,9 +20,13 @@ const contractAddress = process.env.CONTRACT_ADDRESS;
 // contract → ethers.Contract instance to call smart contract functions.
 
 
-const provider = new ethers.providers.JsonRpcProvider(process.env.RPC_URL);
+const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
 const signer = new ethers.Wallet(process.env.PRIVATE_KEY, provider);
-const contract = new ethers.Contract(contractAddress, contractABI, signer);
+const contract = new ethers.Contract(
+  process.env.CONTRACT_ADDRESS,
+  contractABI,
+  signer
+);
 
 // Upload report
 const uploadReport = async (req, res) => {
