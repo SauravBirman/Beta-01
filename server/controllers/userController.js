@@ -10,6 +10,7 @@ const registerUser = async (req, res) => {
         return res.json({success: false , message: "All details not filled"});
     }
 
+    console.log(name);
     // Check if user already exists
     const existingUser = await User.findOne({ email });
     if (existingUser) return res.status(400).json({ message: 'User already exists' });
@@ -31,12 +32,14 @@ const registerUser = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      data: {
+      token,
+      user: {
         id: createdUser._id,
         name: createdUser.name,
-        email: createdUser.email,
-      },
+        email: createdUser.email
+      }
     });
+
 
   } catch (error) {
     console.error('Register error:', error);
@@ -74,7 +77,6 @@ const loginUser = async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 };
-
 
 
 module.exports = { registerUser, loginUser };

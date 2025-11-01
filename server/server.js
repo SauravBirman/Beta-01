@@ -10,6 +10,8 @@ const connectDB = require('./config/mongoose-connection');
 // Routes
 // const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
+const { protect } = require('./middlewares/authUser');
+
 
 // const { errorHandler } = require('./middlewares/errorHandler');
 
