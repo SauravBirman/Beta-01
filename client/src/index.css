@@ -1,0 +1,34 @@
+/* Load Google Material Icons (used by Navbar and Slidebar) */
+@import url('https://fonts.googleapis.com/icon?family=Material+Icons');
+
+@import "tailwindcss";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Material Icons helper */
+.material-icons {
+	font-family: 'Material Icons';
+	font-weight: normal;
+	font-style: normal;
+	font-size: 24px; /* Preferred icon size */
+	display: inline-block;
+	line-height: 1;
+	text-transform: none;
+	letter-spacing: normal;
+	word-wrap: normal;
+	white-space: nowrap;
+	direction: ltr;
+	-webkit-font-feature-settings: 'liga';
+	-webkit-font-smoothing: antialiased;
+}
+
+	/* subtle float animation for dashboard cards */
+	@keyframes float {
+		0% { transform: translateY(0); }
+		50% { transform: translateY(-6px); }
+		100% { transform: translateY(0); }
+	}
+	.animate-float {
+		animation: float 3s ease-in-out infinite;
+	}
