@@ -1,41 +1,52 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-contract ReportContract {
+contract ReportAccess {
     struct Report {
-        address patient;
-        mapping(address => bool) access;
+        string ipfsHash;
+        address owner;           // Patient
+        mapping(address => bool) accessList;
     }
 
     mapping(string => Report) private reports;
 
-    event ReportRegistered(address indexed patient, string ipfsHash);
-    event AccessGranted(string ipfsHash, address indexed doctor);
-    event AccessRevoked(string ipfsHash, address indexed doctor);
+    // Events
+    event ReportRegistered(address indexed owner, string ipfsHash);
+    event AccessGranted(address indexed doctor, string ipfsHash);
+    event AccessRevoked(address indexed doctor, string ipfsHash);
 
-    // Register a report
-    function registerReport(address _patient, string memory _ipfsHash) public {
-        reports[_ipfsHash].patient = _patient;
-        emit ReportRegistered(_patient, _ipfsHash);
+    // Register report
+    function registerReport(string memory ipfsHash) public {
+        require(bytes(ipfsHash).length > 0, "Invalid hash");
+        Report storage r = reports[ipfsHash];
+        r.ipfsHash = ipfsHash;
+        r.owner = msg.sender;
+        r.accessList[msg.sender] = true;  // Owner always has access
+
+        emit ReportRegistered(msg.sender, ipfsHash);
     }
 
-    // Grant doctor access
-    function grantAccess(string memory _ipfsHash, address _doctor) public {
-        require(reports[_ipfsHash].patient == msg.sender, "Not authorized");
-        reports[_ipfsHash].access[_doctor] = true;
-        emit AccessGranted(_ipfsHash, _doctor);
+    // Grant access to a doctor
+    function grantAccess(string memory ipfsHash, address doctor) public {
+        Report storage r = reports[ipfsHash];
+        require(r.owner == msg.sender, "Not owner");
+        r.accessList[doctor] = true;
+
+        emit AccessGranted(doctor, ipfsHash);
     }
 
-    // Revoke access
-    function revokeAccess(string memory _ipfsHash, address _doctor) public {
-        require(reports[_ipfsHash].patient == msg.sender, "Not authorized");
-        reports[_ipfsHash].access[_doctor] = false;
-        emit AccessRevoked(_ipfsHash, _doctor);
+    // Revoke access from a doctor
+    function revokeAccess(string memory ipfsHash, address doctor) public {
+        Report storage r = reports[ipfsHash];
+        require(r.owner == msg.sender, "Not owner");
+        require(r.accessList[doctor], "Doctor does not have access");
+        r.accessList[doctor] = false;
+
+        emit AccessRevoked(doctor, ipfsHash);
     }
 
-    // Check access rights
-    function canAccess(string memory _ipfsHash, address _user) public view returns (bool) {
-        if (reports[_ipfsHash].patient == _user) return true;
-        return reports[_ipfsHash].access[_user];
+    // Check access
+    function canAccess(string memory ipfsHash, address user) public view returns (bool) {
+        return reports[ipfsHash].accessList[user];
     }
 }

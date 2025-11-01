@@ -1,7 +1,7 @@
-require("@nomicfoundation/hardhat-toolbox");
-require("dotenv").config();
+import "@nomiclabs/hardhat-waffle";
+import "dotenv/config";
 
-module.exports = {
+export default {
   solidity: "0.8.20",
   networks: {
     sepolia: {

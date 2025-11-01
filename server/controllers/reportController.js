@@ -41,7 +41,7 @@ const uploadReport = async (req, res) => {
     });
 
     // Register report on blockchain
-    const tx = await contract.registerReport(patientAddress, ipfsHash);
+    const tx = await contract.registerReport(ipfsHash); // patient is msg.sender automatically
     await tx.wait(); // Wait until transaction is mined
     
     res.status(201).json({ success: true, report });
