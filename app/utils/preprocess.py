@@ -1,186 +1,224 @@
-"""
-Preprocessing utilities for AI Health Assistant
-
-Includes:
-- Text cleaning
-- Medical abbreviation expansion
-- Tokenization
-- Symptom vectorization for AI models
-- Spell correction (basic)
-- Logging and error handling
-"""
-
 import re
-import string
-from typing import List, Dict, Optional
+import numpy as np
+import pandas as pd
+from typing import Dict, Any, List, Tuple, Union
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.impute import SimpleImputer
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
+from sentence_transformers import SentenceTransformer
+import torch
 import logging
 
-from app.utils.logger import log_debug, log_info, log_error, log_exceptions
-from app.config import settings
+from app.utils.logger import get_logger
+from PIL import Image
+import cv2
+from torchvision import transforms
 
-# --------------------------
-# Medical abbreviations dictionary
-# --------------------------
-MEDICAL_ABBREVIATIONS = {
-    "bp": "blood pressure",
-    "hr": "heart rate",
-    "temp": "temperature",
-    "c/o": "complains of",
-    "h/o": "history of",
-    "s/p": "status post",
-    "dx": "diagnosis",
-    "tx": "treatment",
-    "sx": "symptoms"
-    # Add more abbreviations as needed
-}
+from app.utils.image_preprocess import ImagePreprocessor  # ✅ NEW
 
-# --------------------------
-# Text cleaning and normalization
-# --------------------------
-@log_exceptions
-def preprocess_text(text: str) -> str:
+logger = get_logger(__name__)
+
+
+class TextPreprocessor:
     """
-    Clean and normalize input text.
-
-    Args:
-        text (str): Raw input text
-
-    Returns:
-        str: Cleaned and normalized text
+    Handles preprocessing for text-based data such as:
+    - Doctor notes
+    - Symptoms
+    - Prescriptions
+    Converts text to embeddings using a pretrained model.
     """
-    if not text:
-        return ""
 
-    # Lowercase
-    text = text.lower()
+    def __init__(self, model_name: str = "sentence-transformers/all-MiniLM-L6-v2"):
+        logger.info(f"Initializing TextPreprocessor with model: {model_name}")
+        self.model = SentenceTransformer(model_name)
+        self.stop_words = set(stopwords.words("english"))
 
-    # Expand medical abbreviations
-    for abbr, full in MEDICAL_ABBREVIATIONS.items():
-        text = re.sub(rf"\b{abbr}\b", full, text)
+    def clean_text(self, text: str) -> str:
+        """
+        Perform text normalization, removing punctuation, stopwords, and unnecessary symbols.
+        """
+        if not isinstance(text, str):
+            logger.warning("Expected string input for text, got %s", type(text))
+            return ""
+        text = text.lower()
+        text = re.sub(r"[^a-zA-Z0-9\s]", "", text)
+        tokens = word_tokenize(text)
+        filtered_tokens = [t for t in tokens if t not in self.stop_words]
+        return " ".join(filtered_tokens)
 
-    # Remove URLs
-    text = re.sub(r"http\S+|www\S+|https\S+", "", text)
+    def encode_text(self, text: str) -> np.ndarray:
+        """
+        Convert cleaned text to embedding vector.
+        """
+        cleaned = self.clean_text(text)
+        embedding = self.model.encode(cleaned)
+        return np.array(embedding)
 
-    # Remove punctuation
-    text = text.translate(str.maketrans("", "", string.punctuation))
+    def batch_encode(self, texts: List[str]) -> np.ndarray:
+        """
+        Encode a list of text entries.
+        """
+        cleaned_texts = [self.clean_text(t) for t in texts]
+        embeddings = self.model.encode(cleaned_texts)
+        return np.array(embeddings)
 
-    # Remove extra spaces
-    text = re.sub(r"\s+", " ", text).strip()
 
-    log_debug("Text preprocessed", original=text, cleaned=text)
-    return text
-
-
-# --------------------------
-# Tokenization
-# --------------------------
-@log_exceptions
-def tokenize_text(text: str) -> List[str]:
+class NumericalPreprocessor:
     """
-    Tokenize text into words.
-
-    Args:
-        text (str): Preprocessed text
-
-    Returns:
-        List[str]: Tokens
+    Handles lab data, vitals, and other numerical input preprocessing.
+    Includes missing value imputation and normalization.
     """
-    text = preprocess_text(text)
-    tokens = text.split()
-    log_debug("Text tokenized", tokens=tokens)
-    return tokens
+
+    def __init__(self):
+        self.imputer = SimpleImputer(strategy="mean")
+        self.scaler = StandardScaler()
+
+    def fit_transform(self, data: pd.DataFrame) -> np.ndarray:
+        """
+        Fit and transform numerical data.
+        """
+        logger.info("Fitting numerical imputer and scaler")
+        data_imputed = self.imputer.fit_transform(data)
+        data_scaled = self.scaler.fit_transform(data_imputed)
+        return data_scaled
+
+    def transform(self, data: pd.DataFrame) -> np.ndarray:
+        """
+        Transform numerical data using existing fit.
+        """
+        data_imputed = self.imputer.transform(data)
+        data_scaled = self.scaler.transform(data_imputed)
+        return data_scaled
 
 
-# --------------------------
-# Basic spell correction
-# --------------------------
-COMMON_MISSPELLINGS = {
-    "feaver": "fever",
-    "headake": "headache",
-    "nausia": "nausea",
-    "caugh": "cough"
-    # Add more common misspellings
-}
-
-@log_exceptions
-def correct_spelling(tokens: List[str]) -> List[str]:
+class CategoricalPreprocessor:
     """
-    Correct common misspellings.
-
-    Args:
-        tokens (List[str]): List of tokens
-
-    Returns:
-        List[str]: Tokens with corrected spelling
+    Handles categorical & lifestyle data preprocessing.
     """
-    corrected = [COMMON_MISSPELLINGS.get(tok, tok) for tok in tokens]
-    log_debug("Tokens spell-corrected", original=tokens, corrected=corrected)
-    return corrected
-# --------------------------
-# Symptom vectorization (for AI models)
-# --------------------------
-import numpy as np
 
-@log_exceptions
-def vectorize_symptoms(tokens: List[str], embedding_model: Optional[object] = None) -> np.ndarray:
+    def __init__(self):
+        self.encoder = OneHotEncoder(sparse_output=False, handle_unknown="ignore")
+
+    def fit_transform(self, data: pd.DataFrame) -> np.ndarray:
+        logger.info("Fitting categorical encoder")
+        return self.encoder.fit_transform(data)
+
+    def transform(self, data: pd.DataFrame) -> np.ndarray:
+        return self.encoder.transform(data)
+
+
+class TimeSeriesPreprocessor:
     """
-    Convert symptom tokens into numerical feature vector for AI models.
-    
-    Args:
-        tokens (List[str]): Tokenized and corrected symptoms
-        embedding_model (Optional[object]): Pretrained embedding model (e.g., BioBERT, Word2Vec)
-    
-    Returns:
-        np.ndarray: Numeric vector representation
+    Handles preprocessing for time-series data (e.g., vitals over time).
+    Windowing, normalization, and tensor conversion for LSTM/GRU models.
     """
-    if not tokens:
-        return np.zeros(300)  # Default vector if empty
 
-    # Placeholder: Using simple average of token lengths if no embedding provided
-    if embedding_model is None:
-        vector = np.array([len(tok)/10.0 for tok in tokens])
-        log_debug("Vectorized symptoms using token length placeholder", tokens=tokens, vector=vector.tolist())
-        return vector
+    def __init__(self, window_size: int = 5):
+        self.window_size = window_size
+        self.scaler = StandardScaler()
 
-    # If embedding model is provided
-    try:
-        embeddings = []
-        for tok in tokens:
-            if hasattr(embedding_model, 'get_vector'):  # e.g., Word2Vec
-                emb = embedding_model.get_vector(tok)
-            elif hasattr(embedding_model, 'encode'):  # e.g., HuggingFace model
-                emb = embedding_model.encode(tok)
-            else:
-                emb = np.zeros(300)
-            embeddings.append(emb)
-        vector = np.mean(embeddings, axis=0)
-        log_debug("Vectorized symptoms using embedding model", tokens=tokens, vector=vector.tolist())
-        return vector
-    except Exception as e:
-        log_error("Error vectorizing symptoms", exc=e, tokens=tokens)
-        return np.zeros(300)
+    def create_windows(self, series: Union[List[float], np.ndarray]) -> np.ndarray:
+        """
+        Convert a single time-series into overlapping windows.
+        """
+        X = []
+        for i in range(len(series) - self.window_size + 1):
+            window = series[i:i + self.window_size]
+            X.append(window)
+        return np.array(X)
 
-# --------------------------
-# Full pipeline: preprocess + tokenize + spell correct + vectorize
-# --------------------------
-@log_exceptions
-def preprocess_pipeline(text: str, embedding_model: Optional[object] = None) -> np.ndarray:
+    def preprocess(self, series: Union[List[float], np.ndarray]) -> torch.Tensor:
+        """
+        Full pipeline: scale → window → convert to tensor.
+        """
+        series = np.array(series).reshape(-1, 1)
+        scaled = self.scaler.fit_transform(series).flatten()
+        windows = self.create_windows(scaled)
+        return torch.tensor(windows, dtype=torch.float32)
+
+class HistoryContextPreprocessor:
     """
-    Full preprocessing pipeline for symptom text:
-    - Clean text
-    - Tokenize
-    - Correct spelling
-    - Vectorize for AI models
-
-    Args:
-        text (str): Raw symptom text
-        embedding_model (Optional[object]): Pretrained embedding model
-
-    Returns:
-        np.ndarray: Final symptom vector
+    Summarizes patient history, previous reports, and treatments into a contextual embedding.
+    This helps models leverage longitudinal patient data for better prediction.
     """
-    tokens = tokenize_text(text)
-    corrected_tokens = correct_spelling(tokens)
-    vector = vectorize_symptoms(corrected_tokens, embedding_model=embedding_model)
-    log_info("Preprocessing pipeline completed", text=text, tokens=corrected_tokens, vector_shape=vector.shape)
-    return vector
+
+    def __init__(self, model_name: str = "sentence-transformers/all-MiniLM-L6-v2"):
+        logger.info("Initializing HistoryContextPreprocessor")
+        self.model = SentenceTransformer(model_name)
+        self.text_cleaner = TextPreprocessor(model_name)
+
+    def summarize_history(self, records: List[str]) -> np.ndarray:
+        """
+        Combines multiple past entries (e.g., past diagnoses, prescriptions)
+        into a single contextual embedding.
+        """
+        if not records:
+            logger.warning("Empty patient history received.")
+            return np.zeros(384)
+
+        cleaned = [self.text_cleaner.clean_text(r) for r in records]
+        embeddings = self.model.encode(cleaned)
+        mean_embedding = np.mean(embeddings, axis=0)
+        logger.info("Generated history context embedding of shape %s", mean_embedding.shape)
+        return mean_embedding
+
+class DataPreprocessor:
+    """
+    Unified preprocessor combining multiple preprocessing pipelines
+    for multi-modal patient data.
+    """
+
+    def __init__(self):
+        self.text_processor = TextPreprocessor()
+        self.num_processor = NumericalPreprocessor()
+        self.cat_processor = CategoricalPreprocessor()
+        self.ts_processor = TimeSeriesPreprocessor()
+        self.image_processor = ImagePreprocessor()            # ✅ NEW
+        self.history_processor = HistoryContextPreprocessor()  # ✅ NEW
+
+
+    def preprocess_patient_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Expects a dictionary with possible keys:
+            {
+                "symptoms": str,
+                "doctor_notes": str,
+                "lab_results": pd.DataFrame,
+                "vitals": pd.DataFrame,
+                "lifestyle": pd.DataFrame,
+                "time_series": list or np.ndarray
+            }
+        Returns preprocessed dictionary with embeddings, normalized arrays, etc.
+        """
+        logger.info("Starting multi-modal preprocessing pipeline")
+        processed = {}
+
+        if "symptoms" in data:
+            processed["symptoms_emb"] = self.text_processor.encode_text(data["symptoms"])
+
+        if "doctor_notes" in data:
+            processed["notes_emb"] = self.text_processor.encode_text(data["doctor_notes"])
+
+        if "lab_results" in data:
+            processed["lab_features"] = self.num_processor.fit_transform(data["lab_results"])
+
+        if "vitals" in data:
+            processed["vitals_features"] = self.num_processor.fit_transform(data["vitals"])
+
+        if "lifestyle" in data:
+            processed["lifestyle_features"] = self.cat_processor.fit_transform(data["lifestyle"])
+
+        if "time_series" in data:
+            processed["time_series_tensor"] = self.ts_processor.preprocess(data["time_series"])
+
+        # ✅ NEW: Handle medical images
+        if "images" in data and data["images"]:
+            processed["image_features"] = self.image_processor.process_images(data["images"])
+
+        # ✅ NEW: Handle patient history
+        if "patient_history" in data and data["patient_history"]:
+            processed["history_context"] = self.history_processor.summarize_history(data["patient_history"])
+
+        logger.info("Preprocessing completed successfully with multimodal data")
+        return processed

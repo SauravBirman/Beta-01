@@ -1,118 +1,176 @@
-"""
-FastAPI application entrypoint and app factory.
-
-This module creates and configures the FastAPI app, registers routers,
-adds middleware, configures logging, and loads models lazily.
-
-Usage:
-    # for development
-    uvicorn app.main:app --reload
-
-    # or when using as module
-    from app.main import create_app
-    app = create_app()
-"""
-
-import logging
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Callable, Optional
+import uvicorn
+import time
+import uuid
 
 from .config import settings
-from .utils.logger import setup_logging
+from .utils.logger import get_logger
 
-# List of routers to include
-ROUTERS = [
-    ("app.routes.analyze", "router"),
-    ("app.routes.summarize", "router"),
-    ("app.routes.predict", "router"),
-    ("app.routes.personalization", "router"),
-]
+# Import all routers
+from .routes import (
+    analyze,
+    summarize,
+    predict,
+    personalization,
+    history,            # ✅ NEW
+    image_analysis,     # ✅ NEW
+    fusion              # ✅ NEW
+)
 
-def _import_router(module_path: str):
-    """Dynamic import helper for routers to avoid circular imports."""
-    import importlib
-    module = importlib.import_module(module_path)
-    return getattr(module, "router")
+# Initialize app and logger
+app = FastAPI(
+    title="AI Health Assistant",
+    description=(
+        "Advanced AI backend for symptom analysis, report summarization, "
+        "disease prediction, preventive care, and patient-specific personalization."
+    ),
+    version="2.0.0"
+)
 
-def create_app(debug: Optional[bool] = None) -> FastAPI:
-    """Application factory.
+logger = get_logger(__name__)
 
-    Args:
-        debug: override settings.DEBUG if provided.
+# --------------------------
+# CORS Configuration
+# --------------------------
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.ALLOWED_ORIGINS if hasattr(settings, "ALLOWED_ORIGINS") else ["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-    Returns:
-        configured FastAPI app
+# --------------------------
+# Middleware: Request Tracing + Timing
+# --------------------------
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
     """
-    debug = settings.DEBUG if debug is None else debug
+    Logs incoming requests with unique request ID, duration, and status.
+    """
+    request_id = str(uuid.uuid4())
+    start_time = time.time()
 
-    # Setup logging first
-    setup_logging(debug=debug)
-    logger = logging.getLogger("ai_module")
+    logger.info(f"➡️ Request Start | ID={request_id} | {request.method} {request.url.path}")
 
-    app = FastAPI(
-        title="AI Health Assistant",
-        description="APIs for symptom analysis, report summarization, disease risk prediction, and personalization.",
-        version="0.1.0",
-        debug=debug,
-    )
-
-    # CORS configuration
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=settings.CORS_ORIGINS or ["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-
-    # Request logging middleware
-    @app.middleware("http")
-    async def logging_middleware(request: Request, call_next: Callable):
-        logger.info(f"Incoming request: {request.method} {request.url.path}")
-        try:
-            response = await call_next(request)
-        except Exception as exc:
-            logger.exception("Unhandled exception in request handling")
-            raise
-        logger.info(f"Completed request: {request.method} {request.url.path} -> {response.status_code}")
-        return response
-
-    # Register routers dynamically
-    for router_module, attr in [(r[0], r[1]) for r in ROUTERS]:
-        try:
-            router = _import_router(router_module)
-            app.include_router(router)
-            logger.debug(f"Included router from {router_module}")
-        except Exception as e:
-            logger.exception(f"Failed to include router {router_module}: {e}")
-
-    # Health check endpoint
-    @app.get("/health", tags=["health"])
-    async def health():
-        return {"status": "ok", "version": app.version}
-
-    # Global exception handler
-    @app.exception_handler(Exception)
-    async def global_exception_handler(request: Request, exc: Exception):
-        logger.exception(f"Unhandled error for request {request.method} {request.url}")
-        return JSONResponse(
-            status_code=500,
-            content={"detail": "Internal server error"},
+    try:
+        response: Response = await call_next(request)
+    except Exception as e:
+        logger.exception(f"❌ Request Failed | ID={request_id} | Error={str(e)}")
+        return Response(
+            content=f"Internal server error | request_id={request_id}",
+            status_code=500
         )
 
-    # Startup event
-    @app.on_event("startup")
-    async def on_startup():
-        logger.info("Application startup: loading lightweight resources")
+    process_time = time.time() - start_time
+    logger.info(
+        f"✅ Request Complete | ID={request_id} | Status={response.status_code} | "
+        f"Time={process_time:.3f}s"
+    )
+    response.headers["X-Process-Time"] = str(process_time)
+    response.headers["X-Request-ID"] = request_id
+    return response
 
-    # Shutdown event
-    @app.on_event("shutdown")
-    async def on_shutdown():
-        logger.info("Application shutdown: releasing resources")
 
+# --------------------------
+# Startup Event
+# --------------------------
+@app.on_event("startup")
+async def startup_event():
+    """
+    Load all required models and initialize services at startup.
+    """
+    logger.info("🚀 Starting AI Health Assistant backend...")
+
+    try:
+        from .services import (
+            symptom_model,
+            summary_model,
+            disease_model,
+            recommender,
+            personalization_engine,
+            image_model,        # ✅ NEW
+            fusion_layer,       # ✅ NEW
+            history_engine      # ✅ NEW
+        )
+
+        # Load all core models
+        symptom_model.load_model(settings.SYMPTOM_MODEL_PATH)
+        summary_model.load_model(settings.SUMMARY_MODEL_PATH)
+        disease_model.load_model(settings.DISEASE_MODEL_PATH)
+
+        # Initialize recommender & personalization
+        recommender.init_engine()
+        personalization_engine.initialize()
+
+        # ✅ NEW: Load image and fusion modules
+        image_model.get_default_image_model()
+        fusion_layer.initialize()
+        history_engine.initialize()
+
+        logger.info("✅ All AI modules initialized successfully.")
+    except Exception as e:
+        logger.exception(f"❌ Startup failed: {str(e)}")
+
+
+# --------------------------
+# Shutdown Event
+# --------------------------
+@app.on_event("shutdown")
+async def shutdown_event():
+    logger.info("🧩 Shutting down AI backend gracefully...")
+    try:
+        from .services import personalization_engine
+        personalization_engine.cleanup()
+        logger.info("✅ Cleanup completed successfully.")
+    except Exception as e:
+        logger.warning(f"⚠️ Cleanup encountered an issue: {e}")
+
+
+# --------------------------
+# Register API Routers
+# --------------------------
+app.include_router(analyze.router, prefix="/analyze-symptoms", tags=["Symptom Analysis"])
+app.include_router(summarize.router, prefix="/summarize-report", tags=["Report Summarization"])
+app.include_router(predict.router, prefix="/predict-risk", tags=["Disease Prediction"])
+app.include_router(personalization.router, prefix="/personalization", tags=["Personalization Engine"])
+app.include_router(history.router, prefix="/patient-history", tags=["Patient History"])         # ✅ NEW
+app.include_router(image_analysis.router, prefix="/image-analysis", tags=["Image Analysis"])    # ✅ NEW
+app.include_router(fusion.router, prefix="/fusion", tags=["Fusion Layer"])                      # ✅ NEW
+
+
+# --------------------------
+# Health Check Endpoint
+# --------------------------
+@app.get("/health", tags=["System"])
+async def health_check():
+    """
+    Used by deployment probes to verify service health.
+    """
+    return {
+        "status": "healthy",
+        "service": "AI Health Assistant",
+        "version": app.version,
+        "environment": settings.ENVIRONMENT if hasattr(settings, "ENVIRONMENT") else "dev"
+    }
+
+
+# --------------------------
+# Factory Function
+# --------------------------
+def create_app():
+    """Factory function for Gunicorn/Uvicorn deployment."""
     return app
 
-# Default app instance for uvicorn
-app = create_app()
+
+# --------------------------
+# Run Application
+# --------------------------
+if __name__ == "__main__":
+    uvicorn.run(
+        "app.main:app",
+        host="0.0.0.0",
+        port=settings.APP_PORT if hasattr(settings, "APP_PORT") else 8000,
+        reload=settings.DEBUG if hasattr(settings, "DEBUG") else True
+    )

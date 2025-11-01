@@ -1,165 +1,159 @@
-"""
-Postprocessing utilities for AI Health Assistant
-
-Includes:
-- Formatting symptom predictions
-- Formatting disease risk predictions
-- Formatting report summaries
-- Integration with personalization adjustments
-- Logging and error handling
-"""
-
-from typing import List, Dict, Optional
 import numpy as np
-from app.utils.logger import log_debug, log_info, log_error, log_exceptions
-from app.config import settings
+from typing import Dict, Any, List, Union, Optional
+from datetime import datetime
 
-# --------------------------
-# Format symptom analysis output
-# --------------------------
-@log_exceptions
-def format_symptom_output(predictions: List[Dict], top_k: Optional[int] = None, personalization_weights: Optional[Dict] = None) -> List[Dict]:
+from app.utils.logger import get_logger
+from app.services.fusion_layer import FusionLayer, fuse_patient_modalities
+  # moved actual fusion logic here
+
+logger = get_logger(__name__)
+
+
+class ScoreNormalizer:
     """
-    Format symptom model predictions.
-
-    Args:
-        predictions (List[Dict]): Raw predictions from symptom model, e.g., [{"disease": "flu", "probability": 0.85}]
-        top_k (Optional[int]): Number of top predictions to keep
-        personalization_weights (Optional[Dict]): Patient-specific weighting adjustments
-
-    Returns:
-        List[Dict]: Formatted predictions sorted by probability
+    Utility to normalize various model scores into a comparable range [0, 1].
+    Used for UI presentation or ranking confidence, not for fusion itself.
     """
-    if not predictions:
-        return []
 
-    # Apply personalization adjustments
-    if personalization_weights:
-        for pred in predictions:
-            weight = personalization_weights.get(pred["disease"], 1.0)
-            pred["probability"] *= weight
-            log_debug("Applied personalization weight", disease=pred["disease"], original=pred["probability"]/weight, weight=weight, adjusted=pred["probability"])
+    def __init__(self, method: str = "minmax"):
+        self.method = method
 
-    # Sort predictions
-    predictions_sorted = sorted(predictions, key=lambda x: x["probability"], reverse=True)
+    def normalize(self, scores: Union[List[float], np.ndarray]) -> np.ndarray:
+        scores = np.array(scores, dtype=float)
 
-    # Keep top-k if specified
-    if top_k:
-        predictions_sorted = predictions_sorted[:top_k]
+        try:
+            if self.method == "minmax":
+                min_val, max_val = np.min(scores), np.max(scores)
+                if max_val == min_val:
+                    return np.zeros_like(scores)
+                return (scores - min_val) / (max_val - min_val)
 
-    # Round probabilities
-    for pred in predictions_sorted:
-        pred["probability"] = round(pred["probability"], 4)
+            elif self.method == "softmax":
+                exp_scores = np.exp(scores - np.max(scores))
+                return exp_scores / exp_scores.sum()
 
-    log_info("Symptom predictions formatted", predictions=predictions_sorted)
-    return predictions_sorted
+            else:
+                logger.warning("Unknown normalization method '%s'. Returning unchanged scores.", self.method)
+                return scores
+
+        except Exception as e:
+            logger.error("Score normalization failed: %s", str(e))
+            return np.zeros_like(scores)
 
 
-# --------------------------
-# Format disease risk output
-# --------------------------
-@log_exceptions
-def format_disease_output(risks: List[Dict], top_k: Optional[int] = None, personalization_weights: Optional[Dict] = None) -> List[Dict]:
+class ReportFormatter:
     """
-    Format disease risk predictions.
-
-    Args:
-        risks (List[Dict]): Raw risk predictions from disease model
-        top_k (Optional[int]): Number of top risks to return
-        personalization_weights (Optional[Dict]): Patient-specific weighting adjustments
-
-    Returns:
-        List[Dict]: Formatted risks sorted by probability
+    Converts AI outputs into readable summaries for both patients and clinicians.
     """
-    if not risks:
-        return []
 
-    # Apply personalization adjustments
-    if personalization_weights:
-        for risk in risks:
-            weight = personalization_weights.get(risk["disease"], 1.0)
-            risk["probability"] *= weight
-            log_debug("Applied personalization weight to risk", disease=risk["disease"], adjusted=risk["probability"])
+    def format_symptom_analysis(self, analysis: Dict[str, Any]) -> str:
+        detected = ", ".join(analysis.get("symptoms_detected", []))
+        possible = ", ".join(analysis.get("possible_conditions", []))
+        summary = f"Detected symptoms: {detected or 'None'}. Possible causes: {possible or 'Unknown'}."
+        return summary.strip()
 
-    # Sort and top-k
-    risks_sorted = sorted(risks, key=lambda x: x["probability"], reverse=True)
-    if top_k:
-        risks_sorted = risks_sorted[:top_k]
+    def format_risk_summary(self, risk_scores: Dict[str, float]) -> str:
+        formatted_lines = [
+            f"- {disease.capitalize()}: {round(score * 100, 2)}% risk"
+            for disease, score in sorted(risk_scores.items(), key=lambda x: x[1], reverse=True)
+        ]
+        return "\n".join(formatted_lines) if formatted_lines else "No disease risk detected."
 
-    # Round probabilities
-    for risk in risks_sorted:
-        risk["probability"] = round(risk["probability"], 4)
+    def format_lifestyle_recommendations(self, recs: Dict[str, List[str]]) -> str:
+        output = ["Recommended Lifestyle Adjustments:"]
+        for category, tips in recs.items():
+            output.append(f"\n{category.capitalize()}:")
+            for tip in tips:
+                output.append(f"  • {tip}")
+        return "\n".join(output) if recs else "No recommendations available."
 
-    log_info("Disease risk predictions formatted", risks=risks_sorted)
-    return risks_sorted
-# --------------------------
-# Format report summaries
-# --------------------------
-@log_exceptions
-def format_summary_output(summary: str, max_length: Optional[int] = None) -> str:
+
+class DashboardBuilder:
     """
-    Format and clean model-generated summaries.
-
-    Args:
-        summary (str): Raw summary text
-        max_length (Optional[int]): Maximum length of summary (in characters)
-
-    Returns:
-        str: Cleaned and optionally truncated summary
+    Builds structured dashboards for frontend consumption.
+    Integrates personalization and multimodal context metadata.
     """
-    if not summary:
-        return ""
 
-    # Remove extra spaces and newlines
-    formatted = " ".join(summary.split())
+    def __init__(self):
+        self.formatter = ReportFormatter()
+        self.aggregator = FusionLayer()
 
-    # Truncate if max_length is specified
-    if max_length and len(formatted) > max_length:
-        formatted = formatted[:max_length].rstrip()
-        log_debug("Summary truncated to max_length", max_length=max_length, summary=formatted)
+    def build_patient_dashboard(
+        self,
+        patient_id: str,
+        risks: Dict[str, float],
+        recommendations: Dict[str, List[str]],
+        summary_text: str,
+        personalization_meta: Optional[Dict[str, Any]] = None,
+        fusion_sources: Optional[Dict[str, float]] = None,
+        blockchain_ref: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Create unified JSON output for patient portal.
+        """
+        try:
+            overall_status = self._compute_health_status(risks)
+            timestamp = datetime.utcnow().isoformat() + "Z"
 
-    log_info("Summary formatted", summary=formatted)
-    return formatted
+            dashboard = {
+                "patient_id": patient_id,
+                "timestamp": timestamp,
+                "overall_health_status": overall_status,
+                "disease_risk_summary": self.formatter.format_risk_summary(risks),
+                "ai_summary": summary_text,
+                "personalized_recommendations": recommendations,
+                "fusion_sources": fusion_sources or {},
+                "personalization_metadata": personalization_meta or {},
+                "blockchain_reference": blockchain_ref,
+            }
 
+            logger.info("✅ Patient dashboard generated successfully for %s", patient_id)
+            return dashboard
 
-# --------------------------
-# Full pipeline for predictions
-# --------------------------
-@log_exceptions
-def postprocess_pipeline(
-    predictions: List[Dict],
-    summary: Optional[str] = None,
-    top_k: Optional[int] = None,
-    personalization_weights: Optional[Dict] = None
-) -> Dict:
-    """
-    Full postprocessing pipeline:
-    - Format symptom/disease predictions
-    - Format summary
-    - Apply personalization weights
+        except Exception as e:
+            logger.error("Failed to build patient dashboard: %s", str(e))
+            return {"error": str(e)}
 
-    Args:
-        predictions (List[Dict]): Raw symptom or risk predictions
-        summary (Optional[str]): Raw report summary
-        top_k (Optional[int]): Top-K selection for predictions
-        personalization_weights (Optional[Dict]): Patient-specific adjustments
+    def build_doctor_dashboard(
+        self,
+        patient_name: str,
+        risks: Dict[str, float],
+        ai_notes: str,
+        alerts: Optional[List[str]] = None,
+        lab_summary: Optional[str] = None,
+        image_summary: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Doctor view: includes deeper diagnostic insight across modalities.
+        """
+        try:
+            doctor_view = {
+                "patient_name": patient_name,
+                "generated_at": datetime.utcnow().isoformat() + "Z",
+                "aggregated_risks": risks,
+                "ai_summary_notes": ai_notes,
+                "modality_summaries": {
+                    "lab": lab_summary,
+                    "image": image_summary,
+                },
+                "alerts": alerts or self._generate_alerts(risks),
+            }
 
-    Returns:
-        Dict: {
-            "predictions": formatted predictions,
-            "summary": formatted summary
-        }
-    """
-    formatted_predictions = format_symptom_output(
-        predictions, top_k=top_k, personalization_weights=personalization_weights
-    )
+            logger.info("👨‍⚕️ Doctor dashboard created for %s", patient_name)
+            return doctor_view
 
-    formatted_summary = None
-    if summary:
-        formatted_summary = format_summary_output(summary, max_length=settings.summary_max_tokens)
+        except Exception as e:
+            logger.error("Error while building doctor dashboard for %s: %s", patient_name, str(e))
+            return {"error": str(e)}
 
-    log_info("Postprocessing pipeline completed", predictions=formatted_predictions, summary=formatted_summary)
-    return {
-        "predictions": formatted_predictions,
-        "summary": formatted_summary
-    }
+    def _compute_health_status(self, risks: Dict[str, float]) -> str:
+        avg_risk = np.mean(list(risks.values())) if risks else 0.0
+        if avg_risk < 0.3:
+            return "Healthy"
+        elif avg_risk < 0.6:
+            return "Moderate Risk"
+        else:
+            return "High Risk"
+
+    def _generate_alerts(self, risks: Dict[str, float]) -> List[str]:
+        return [f"⚠️ High risk of {disease}" for disease, score in risks.items() if score > 0.7]

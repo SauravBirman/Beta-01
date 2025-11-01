@@ -1,53 +1,109 @@
-"""
-FastAPI route for summarizing medical reports
-Endpoint: /summarize-report
-"""
-
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile, Form
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, Dict, Any
+import asyncio
+import traceback
+from datetime import datetime
 
-from app.services.summary_model import get_summary_service
-from app.utils.postprocess import format_summary_output
-from app.utils.logger import log_info, log_error, log_exceptions
+from app.services.summary_model import SummaryService
+from app.utils.logger import get_logger
+from app.utils.postprocess import ReportFormatter
 
+logger = get_logger(__name__)
 router = APIRouter()
 
-# --------------------------
-# Request schema
-# --------------------------
-class ReportRequest(BaseModel):
+# Initialize services
+summary_service = SummaryService()
+formatter = ReportFormatter()
+
+
+# ----------- Request and Response Models -----------
+
+class ReportSummaryRequest(BaseModel):
+    patient_id: str
     report_text: str
-    max_tokens: Optional[int] = None
+    report_type: Optional[str] = "general"
+    language: Optional[str] = "en"
 
-# --------------------------
-# Response schema
-# --------------------------
-class ReportResponse(BaseModel):
-    summary: str
 
-# --------------------------
-# Route: /summarize-report
-# --------------------------
-@router.post("/summarize-report", response_model=ReportResponse)
-@log_exceptions
-async def summarize_report(request: ReportRequest):
+class ReportSummaryResponse(BaseModel):
+    patient_id: str
+    generated_at: str
+    structured_summary: Dict[str, Any]
+    summary_text: str
+    ai_confidence: float
+
+
+# ----------- Route Implementation -----------
+
+@router.post("/summarize-report", response_model=ReportSummaryResponse)
+async def summarize_report(request: ReportSummaryRequest):
     """
-    Generate summary for a given medical report
+    Summarize a medical report or prescription using BioBERT-like transformer model.
+    Includes structured summary info (keywords, readability, length, etc.)
     """
+
     try:
-        # Initialize summary service
-        summary_service = get_summary_service(max_tokens=request.max_tokens)
+        logger.info(f"[Summarization] Processing report for patient_id={request.patient_id}")
 
-        # Generate summary
-        summary_raw = summary_service.summarize(request.report_text)
+        # Step 1: Run the summarization asynchronously
+        loop = asyncio.get_event_loop()
+        summary_data = await loop.run_in_executor(
+            None,
+            lambda: summary_service.summarize(
+                text=request.report_text,
+                report_type=request.report_type,
+                language=request.language
+            ),
+        )
 
-        # Postprocess and format summary
-        summary_formatted = format_summary_output(summary_raw, max_length=request.max_tokens)
+        # Step 2: Postprocess and build structured result
+        structured_summary = {
+            "report_type": request.report_type,
+            "keywords": summary_data.get("keywords", []),
+            "readability_score": summary_data.get("readability_score", 0.0),
+            "summary_length": len(summary_data.get("summary_text", "").split()),
+            "language": request.language,
+            "model_version": summary_data.get("model_version"),
+        }
 
-        log_info("Report summarization completed", summary_preview=summary_formatted[:100])
-        return {"summary": summary_formatted}
+        # Step 3: Format text summary for readability
+        formatted_summary = formatter.format_symptom_analysis({
+            "symptoms_detected": summary_data.get("keywords", []),
+            "possible_conditions": summary_data.get("predicted_conditions", []),
+        })
+
+        # Step 4: Construct response payload
+        response = ReportSummaryResponse(
+            patient_id=request.patient_id,
+            generated_at=datetime.utcnow().isoformat() + "Z",
+            structured_summary=structured_summary,
+            summary_text=formatted_summary or summary_data.get("summary_text", ""),
+            ai_confidence=float(summary_data.get("confidence", 0.9)),
+        )
+
+        logger.info(f"[Summarization] Completed for patient_id={request.patient_id}")
+        return response
 
     except Exception as e:
-        log_error("Error in /summarize-report route", exc=e)
-        raise HTTPException(status_code=500, detail=str(e))
+        error_trace = traceback.format_exc()
+        logger.error(f"[SummarizationError] Failed for patient_id={request.patient_id}: {str(e)}")
+        logger.debug(error_trace)
+        raise HTTPException(status_code=500, detail="Internal error during report summarization.")
+
+
+# ----------- Example Testing Endpoint -----------
+
+@router.get("/summarize-report/test")
+async def test_summary():
+    """
+    Simple test endpoint for verifying summarization module.
+    """
+    sample_report = """
+    Patient exhibits mild cough and fatigue for 5 days. 
+    Lab results show slightly elevated WBC count.
+    No chest pain or shortness of breath observed.
+    """
+    test_request = ReportSummaryRequest(patient_id="test123", report_text=sample_report)
+    result = await summarize_report(test_request)
+    return result.dict()

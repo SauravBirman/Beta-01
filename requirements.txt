@@ -1,38 +1,40 @@
-# FastAPI web framework
-fastapi==0.111.0
-uvicorn[standard]==0.23.2
+# === Core Backend ===
+fastapi==0.115.2
+uvicorn[standard]==0.32.0
+python-dotenv==1.0.1
+pydantic==2.8.2
+requests==2.32.3
+python-multipart==0.0.9
 
-# PyTorch for deep learning models
-torch>=2.9.0
-torchvision>=0.17.1
+# === Machine Learning & Data ===
+scikit-learn==1.5.2
+numpy==1.26.4
+pandas==2.2.3
+joblib==1.4.2
+scipy==1.13.1
 
-# Scikit-learn for predictive models
-scikit-learn==1.3.2
+# === Deep Learning ===
+torch==2.6.0
+torchvision==0.21.0
+torchaudio==2.6.0
 
-# NLP and text processing
-transformers==4.35.0
-nltk==3.9.0
-spacy==3.6.0
-sentencepiece==0.1.99
+# === NLP Models (BioBERT / Transformers) ===
+transformers==4.43.3
+sentencepiece==0.2.0
+tokenizers==0.19.1
 
-# Data manipulation
-numpy==1.26.2
-pandas==2.1.1
+# === Utilities ===
+tqdm==4.66.4
+rich==13.9.2
+aiofiles==23.2.1
+httpx==0.27.2
+matplotlib==3.9.2
+Pillow==10.3.0
 
-# JSON, YAML and configuration
-python-dotenv==1.0.0
-pydantic==2.5.2
+# === Logging, Testing, and Config ===
+loguru==0.7.2
+pytest==8.3.2
+pytest-asyncio==0.23.6
+pytest-cov
 
-# Logging
-loguru==0.7.1
-
-# Optional: explainability for models
-shap==0.42.1
-lime==0.2.2.1
-
-# Optional: for Jupyter notebooks
-notebook==7.0.0
-ipython==8.16.0
-
-# Optional: HTTP requests
-requests==2.34.0
+pip install opencv-python

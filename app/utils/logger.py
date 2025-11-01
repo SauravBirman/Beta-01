@@ -1,143 +1,148 @@
-"""
-Logger Utility for AI Health Assistant
-
-Provides production-grade logging with:
-- Console logging
-- File logging with rotation
-- Optional structured logs (JSON)
-- Integration with settings from config.py
-"""
-
 import logging
-import sys
+import os
 from logging.handlers import RotatingFileHandler
+from datetime import datetime
 import json
+from pathlib import Path
+
 from app.config import settings
 
 
 class JsonFormatter(logging.Formatter):
     """
-    Custom JSON formatter for structured logs
+    Custom JSON formatter for structured logging.
+    Useful for cloud logging (e.g., AWS CloudWatch, ELK stack).
     """
+
     def format(self, record):
         log_record = {
-            "timestamp": self.formatTime(record, self.datefmt),
-            "name": record.name,
-            "level": record.levelname,
-            "message": record.getMessage(),
-            "filename": record.filename,
-            "lineno": record.lineno
-        }
+    "timestamp": datetime.utcnow().isoformat() + "Z",
+    "level": record.levelname,
+    "module": record.module,
+    "function": record.funcName,
+    "message": record.getMessage(),
+    "patient_id": getattr(record, "patient_id", None),
+    "request_id": getattr(record, "request_id", None),
+}
+
+
+
+        # Add exception info if present
         if record.exc_info:
             log_record["exception"] = self.formatException(record.exc_info)
+
         return json.dumps(log_record)
 
-
-def setup_logger(name: str = "ai_module", json_format: bool = False, max_bytes: int = 10*1024*1024, backup_count: int = 5):
+class ContextFilter(logging.Filter):
     """
-    Setup a logger with console and rotating file handlers.
-    
-    Args:
-        name (str): Logger name
-        json_format (bool): Whether to use JSON structured logging
-        max_bytes (int): Max file size before rotation
-        backup_count (int): Number of backup files
-    Returns:
-        logging.Logger
+    Injects contextual information (like patient_id or request_id) into all log records.
+    This allows tracking per-user or per-request behavior across services.
     """
-    logger = logging.getLogger(name)
-    logger.setLevel(settings.log_level)
+    def __init__(self, patient_id=None, request_id=None):
+        super().__init__()
+        self.patient_id = patient_id
+        self.request_id = request_id
 
-    if logger.hasHandlers():
-        # Avoid duplicate handlers
-        logger.handlers.clear()
+    def filter(self, record):
+        record.patient_id = getattr(record, "patient_id", self.patient_id)
+        record.request_id = getattr(record, "request_id", self.request_id)
+        return True
 
-    # ----------------------------
-    # Console Handler
-    # ----------------------------
-    ch = logging.StreamHandler(sys.stdout)
-    ch.setLevel(settings.log_level)
-    if json_format:
-        ch.setFormatter(JsonFormatter())
+def _ensure_log_directory_exists(log_path: str):
+    """Ensure the log directory exists before writing log files."""
+    log_dir = Path(log_path).parent
+    if not log_dir.exists():
+        log_dir.mkdir(parents=True, exist_ok=True)
+
+
+def setup_logger():
+    """
+    Configure the root logger based on environment variables.
+
+    - Console logging (colored) for development
+    - Rotating file logging for production
+    - JSON log option for structured logging
+    """
+
+    log_level = getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO)
+    log_format = settings.LOG_FORMAT.lower()
+
+    logger = logging.getLogger()
+    logger.setLevel(log_level)
+    # Attach context filter for patient/request tracing
+    context_filter = ContextFilter()
+    logger.addFilter(context_filter)
+
+    # Remove existing handlers to avoid duplication
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+
+    # ---- Console Handler (Always On) ----
+    console_handler = logging.StreamHandler()
+    if log_format == "json":
+        console_handler.setFormatter(JsonFormatter())
     else:
-        ch.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
-    logger.addHandler(ch)
+        console_formatter = logging.Formatter(
+            fmt="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+        console_handler.setFormatter(console_formatter)
 
-    # ----------------------------
-    # Rotating File Handler
-    # ----------------------------
-    fh = RotatingFileHandler(
-        filename=settings.log_file,
-        maxBytes=max_bytes,
-        backupCount=backup_count
-    )
-    fh.setLevel(settings.log_level)
-    if json_format:
-        fh.setFormatter(JsonFormatter())
-    else:
-        fh.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
-    logger.addHandler(fh)
+    logger.addHandler(console_handler)
 
-    logger.debug(f"Logger '{name}' initialized. JSON format={json_format}, File={settings.log_file}")
-    return logger
-# ----------------------------
-# Helper logging functions
-# ----------------------------
+    # ---- File Handler (Production Only) ----
+    if not settings.DEBUG:
+        _ensure_log_directory_exists(settings.LOG_FILE_PATH)
+        file_handler = RotatingFileHandler(
+            filename=settings.LOG_FILE_PATH,
+            mode="a",
+            maxBytes=5 * 1024 * 1024,  # 5 MB per log file
+            backupCount=5,
+            encoding="utf-8",
+        )
 
-_logger = setup_logger(name="ai_module", json_format=False)  # Default logger
-
-def log_debug(message: str, **kwargs):
-    """Log a debug message with optional extra context."""
-    if kwargs:
-        _logger.debug(f"{message} | Context: {kwargs}")
-    else:
-        _logger.debug(message)
-
-def log_info(message: str, **kwargs):
-    """Log an info message with optional extra context."""
-    if kwargs:
-        _logger.info(f"{message} | Context: {kwargs}")
-    else:
-        _logger.info(message)
-
-def log_warning(message: str, **kwargs):
-    """Log a warning message with optional extra context."""
-    if kwargs:
-        _logger.warning(f"{message} | Context: {kwargs}")
-    else:
-        _logger.warning(message)
-
-def log_error(message: str, exc: Exception = None, **kwargs):
-    """Log an error message with exception info and optional context."""
-    if exc:
-        if kwargs:
-            _logger.error(f"{message} | Context: {kwargs}", exc_info=exc)
+        if log_format == "json":
+            file_handler.setFormatter(JsonFormatter())
         else:
-            _logger.error(message, exc_info=exc)
-    else:
-        if kwargs:
-            _logger.error(f"{message} | Context: {kwargs}")
-        else:
-            _logger.error(message)
+            file_formatter = logging.Formatter(
+                fmt="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S",
+            )
+            file_handler.setFormatter(file_formatter)
 
-# ----------------------------
-# Exception logging decorator
-# ----------------------------
-def log_exceptions(func):
-    """
-    Decorator to log exceptions in a function and re-raise them.
-    Usage:
-        @log_exceptions
-        def some_function(...):
-            ...
-    """
-    import functools
+        logger.addHandler(file_handler)
 
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
+    logger.info("Logger initialized successfully with level: %s", settings.LOG_LEVEL)
+    # Optional remote streaming (future use)
+    if getattr(settings, "ENABLE_REMOTE_LOGGING", False):
         try:
-            return func(*args, **kwargs)
+            logger.info("Remote logging enabled (placeholder). Future: push to blockchain/cloud.")
         except Exception as e:
-            log_error(f"Exception in {func.__name__}", exc=e, args=args, kwargs=kwargs)
-            raise
-    return wrapper
+            logger.warning("Remote logging setup failed: %s", e)
+
+    return logger
+
+
+def get_logger(name: str = None) -> logging.Logger:
+    """
+    Get a module-specific logger. Ensures consistent configuration across modules.
+    Example:
+        logger = get_logger(__name__)
+        logger.info("Symptom analysis started")
+    """
+    return logging.getLogger(name or "ai_module")
+
+
+# Initialize global logger at import time
+logger = setup_logger()
+
+
+# --- Example usage (can be removed in prod) ---
+if __name__ == "__main__":
+    log = get_logger(__name__)
+    log.info("Logger test: info message")
+    log.warning("Logger test: warning message")
+    try:
+        raise ValueError("Sample exception for test")
+    except Exception:
+        log.exception("Exception occurred")
