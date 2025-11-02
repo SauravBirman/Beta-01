@@ -10,7 +10,13 @@ const connectDB = require('./config/mongoose-connection');
 // Routes
 // const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
-const { protect } = require('./middlewares/authUser');
+const  auth  = require('./middlewares/authUser');
+const reportRoutes = require('./routes/reportRoutes');
+const aiRoutes = require('./routes/aiRoutes');
+const path = require('path');
+const docRoutes = require('./routes/docRoutes');
+
+ 
 
 
 // const { errorHandler } = require('./middlewares/errorHandler');
@@ -26,6 +32,11 @@ connectDB();
 
 app.use(express.json()); 
 app.use('/api/users', userRoutes);
+app.use('/api/reports', auth, reportRoutes);
+// Mount AI routes both at /api/ai and at /api/analyze (via /api)
+app.use('/api/ai', aiRoutes);
+app.use('/api', aiRoutes);
+app.use('/api/doctors', docRoutes);
 
 app.get('/', (req, res) => {
   res.send('Welcome to the API');

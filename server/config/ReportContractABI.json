@@ -1,0 +1,125 @@
+{
+  "address": "0xC51Ce641ed544dC221c63890c09ec76dadBcCAb0",
+  "abi": [
+    {
+      "type": "event",
+      "anonymous": false,
+      "name": "AccessGranted",
+      "inputs": [
+        {
+          "type": "address",
+          "name": "doctor",
+          "indexed": true
+        },
+        {
+          "type": "string",
+          "name": "ipfsHash",
+          "indexed": false
+        }
+      ]
+    },
+    {
+      "type": "event",
+      "anonymous": false,
+      "name": "AccessRevoked",
+      "inputs": [
+        {
+          "type": "address",
+          "name": "doctor",
+          "indexed": true
+        },
+        {
+          "type": "string",
+          "name": "ipfsHash",
+          "indexed": false
+        }
+      ]
+    },
+    {
+      "type": "event",
+      "anonymous": false,
+      "name": "ReportRegistered",
+      "inputs": [
+        {
+          "type": "address",
+          "name": "owner",
+          "indexed": true
+        },
+        {
+          "type": "string",
+          "name": "ipfsHash",
+          "indexed": false
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "canAccess",
+      "constant": true,
+      "stateMutability": "view",
+      "payable": false,
+      "inputs": [
+        {
+          "type": "string",
+          "name": "ipfsHash"
+        },
+        {
+          "type": "address",
+          "name": "user"
+        }
+      ],
+      "outputs": [
+        {
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "grantAccess",
+      "constant": false,
+      "payable": false,
+      "inputs": [
+        {
+          "type": "string",
+          "name": "ipfsHash"
+        },
+        {
+          "type": "address",
+          "name": "doctor"
+        }
+      ],
+      "outputs": []
+    },
+    {
+      "type": "function",
+      "name": "registerReport",
+      "constant": false,
+      "payable": false,
+      "inputs": [
+        {
+          "type": "string",
+          "name": "ipfsHash"
+        }
+      ],
+      "outputs": []
+    },
+    {
+      "type": "function",
+      "name": "revokeAccess",
+      "constant": false,
+      "payable": false,
+      "inputs": [
+        {
+          "type": "string",
+          "name": "ipfsHash"
+        },
+        {
+          "type": "address",
+          "name": "doctor"
+        }
+      ],
+      "outputs": []
+    }
+  ]
+}

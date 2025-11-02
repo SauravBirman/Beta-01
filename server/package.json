@@ -1,4 +1,5 @@
 {
+  "json.schemaDownload.enable": false,
   "name": "server",
   "version": "1.0.0",
   "description": "",
@@ -12,16 +13,20 @@
   "license": "ISC",
   "dependencies": {
     "bcrypt": "^6.0.0",
+    "bcryptjs": "^3.0.2",
     "body-parser": "^2.2.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
+    "ethers": "^6.15.0",
     "express": "^5.1.0",
+    "ipfs-http-client": "^60.0.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.19.2",
     "morgan": "^1.10.1",
+    "multer": "^2.0.2",
     "path": "^0.12.7"
   },
   "devDependencies": {
-    "nodemon": "^3.1.10"
+    "@nomicfoundation/hardhat-toolbox": "^6.1.0"
   }
 }
