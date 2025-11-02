@@ -4,22 +4,34 @@ import Navbar from '../../components/Navbar';
 import Slidebar from '../../components/Slidebar';
 
 const Dashboard = () => {
-  const [records, setRecords] = useState([
-    { id: 1, title: 'Blood Test', date: '2025-10-01', status: 'Normal', type: 'Lab Report' },
-    { id: 2, title: 'X-Ray Chest', date: '2025-09-15', status: 'Normal', type: 'Imaging' },
-    { id: 3, title: 'MRI Brain', date: '2025-08-20', status: 'Pending', type: 'Imaging' },
-    { id: 4, title: 'ECG', date: '2025-07-30', status: 'Normal', type: 'Test' },
-  ]);
+  const [records, setRecords] = useState([]);
+  const [recordsLoading, setRecordsLoading] = useState(false);
+  const [recordsError, setRecordsError] = useState('');
 
   const [showUploadModal, setShowUploadModal] = useState(false);
+  const [showAppointmentModal, setShowAppointmentModal] = useState(false);
+  const [appointmentForm, setAppointmentForm] = useState({
+    doctor: '',
+    hospital: '',
+    reason: '',
+    fileIds: [],
+    mode: 'view'
+  });
+  const [appointments, setAppointments] = useState([]);
   const [newRecord, setNewRecord] = useState({
     title: '',
     type: 'Lab Report',
-    date: new Date().toISOString().split('T')[0]
+    date: new Date().toISOString().split('T')[0],
+    file: null,
+    symptoms: ''
   });
+  const [uploadLoading, setUploadLoading] = useState(false);
+  const [uploadError, setUploadError] = useState('');
+  const [uploadSuccess, setUploadSuccess] = useState('');
 
   const [currentTime, setCurrentTime] = useState(new Date());
   const [sunPosition, setSunPosition] = useState(0);
+  const [user, setUser] = useState({ firstName: 'John', lastName: '', name: 'John Doe' });
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -27,6 +39,42 @@ const Dashboard = () => {
     }, 60000); // Update every minute
 
     return () => clearInterval(timer);
+  }, []);
+
+  // fetch records from backend
+  useEffect(() => {
+    let mounted = true;
+    const fetchRecords = async () => {
+      setRecordsLoading(true);
+      setRecordsError('');
+      try {
+        const token = localStorage.getItem('token');
+        const res = await fetch('http://localhost:5000/api/reports/me', {
+          headers: token ? { Authorization: `Bearer ${token}` } : {}
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(json.message || `Failed to load records (${res.status})`);
+        // map server reports to UI records shape
+        const items = (json.reports || json.data || json || []).map((r, idx) => ({
+          id: r._id || r.id || idx + 1,
+          title: r.fileName || r.name || r.summary || 'Report',
+          date: (r.createdAt || r.date || '').slice(0,10) || new Date().toISOString().split('T')[0],
+          status: r.status || 'Normal',
+          type: r.type || 'Lab Report',
+          fileUrl: r.ipfsHash || r.fileUrl || '',
+          symptoms: r.symptoms || r.notes || ''
+        }));
+        if (mounted) setRecords(items);
+      } catch (err) {
+        console.error('Failed to fetch records', err);
+        if (mounted) setRecordsError(err.message || 'Failed to load records');
+      } finally {
+        if (mounted) setRecordsLoading(false);
+      }
+    };
+
+    fetchRecords();
+    return () => { mounted = false; };
   }, []);
 
   useEffect(() => {
@@ -40,19 +88,81 @@ const Dashboard = () => {
     setSunPosition(position);
   }, [currentTime]);
 
+  // load user info (first name) from localStorage if available
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('userData');
+      if (raw) {
+        const u = JSON.parse(raw);
+        const firstName = u.firstName || (u.name ? u.name.split(' ')[0] : '') || 'John';
+        const lastName = u.lastName || (u.name ? (u.name.split(' ')[1] || '') : '');
+        setUser({ firstName, lastName, name: u.name || `${firstName} ${lastName}`.trim() });
+      }
+    } catch (e) {
+      // ignore
+    }
+  }, []);
+
   const handleUpload = () => {
-    if (newRecord.title.trim()) {
+    // Validate
+    setUploadError('');
+    if (!newRecord.title.trim()) {
+      setUploadError('Please enter a record title');
+      return;
+    }
+    if (!newRecord.file) {
+      setUploadError('Please select a file to upload');
+      return;
+    }
+
+    // Build form data
+    const form = new FormData();
+    form.append('file', newRecord.file, newRecord.file.name);
+  // include metadata fields
+  form.append('title', newRecord.title);
+  form.append('type', newRecord.type);
+  form.append('date', newRecord.date);
+  if (newRecord.symptoms) form.append('symptoms', newRecord.symptoms);
+
+    setUploadLoading(true);
+
+    const token = localStorage.getItem('token');
+    fetch('http://localhost:5000/api/reports/upload', {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: form
+    })
+    .then(async res => {
+      const json = await res.json().catch(() => ({}));
+      // accept any 2xx response as success from the backend
+      if (!res.ok) throw new Error(json.message || 'Upload failed');
+      const rpt = json.report || json.data || {};
       const record = {
         id: records.length + 1,
         title: newRecord.title,
         date: newRecord.date,
-        status: 'Pending',
-        type: newRecord.type
+        status: 'Uploaded',
+        type: newRecord.type,
+        fileUrl: rpt.ipfsHash || rpt.fileUrl || '',
+        symptoms: newRecord.symptoms || ''
       };
       setRecords([record, ...records]);
-      setNewRecord({ title: '', type: 'Lab Report', date: new Date().toISOString().split('T')[0] });
+      setUploadSuccess('Record uploaded successfully');
+      setTimeout(() => setUploadSuccess(''), 2500);
+      // reset
+  setNewRecord({ title: '', type: 'Lab Report', date: new Date().toISOString().split('T')[0], file: null, symptoms: '' });
       setShowUploadModal(false);
-    }
+    })
+    .catch(err => {
+      console.error('Upload error', err);
+      setUploadError(err.message || 'Upload failed');
+    })
+    .finally(() => setUploadLoading(false));
+  };
+
+  const handleFileSelect = (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (f) setNewRecord(prev => ({ ...prev, file: f }));
   };
 
   const getTimeBasedGradient = () => {
@@ -118,11 +228,14 @@ const Dashboard = () => {
           {/* User Welcome Section */}
           <div className="flex items-center space-x-6 mb-8 relative z-10">
             <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-blue-600 rounded-full flex items-center justify-center shadow-lg border-2 border-white">
-              <span className="text-white font-bold text-2xl">JD</span>
+              {(() => {
+                const initials = (`${user.firstName?.[0] || ''}${user.lastName?.[0] || ''}`).toUpperCase() || (user.name || 'JD').slice(0,2).toUpperCase();
+                return <span className="text-white font-bold text-2xl">{initials}</span>;
+              })()}
             </div>
             <div>
               <h1 className="text-3xl font-bold text-gray-900 mb-2">
-                {getGreeting()}, John!
+                {getGreeting()}, {user.firstName || 'John'}!
               </h1>
               <p className="text-gray-700 text-lg">
                 {currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • 
@@ -151,9 +264,11 @@ const Dashboard = () => {
           <section className="mb-8 relative z-10">
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-2xl font-bold text-gray-900">Your Health Records</h2>
-              <span className="text-gray-500 bg-white/80 backdrop-blur-sm px-3 py-1 rounded-full">
-                {records.length} records
-              </span>
+                <div className="flex items-center space-x-3">
+                  <span className="text-gray-500 bg-white/80 backdrop-blur-sm px-3 py-1 rounded-full">{records.length} records</span>
+                  {recordsLoading && <span className="text-sm text-gray-500">Loading…</span>}
+                  {recordsError && <span className="text-sm text-red-600">{recordsError}</span>}
+                </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
@@ -170,7 +285,7 @@ const Dashboard = () => {
                       </span>
                     </div>
                     <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                      record.status === 'Normal' 
+                      (record.status === 'Normal' || record.status === 'Uploaded')
                         ? 'bg-green-100 text-green-800'
                         : 'bg-yellow-100 text-yellow-800'
                     }`}>
@@ -185,6 +300,11 @@ const Dashboard = () => {
                       </svg>
                       {record.date}
                     </div>
+                    {record.symptoms && (
+                      <div className="text-sm text-gray-700">
+                        <strong>Symptoms:</strong> {record.symptoms}
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex space-x-2">
@@ -205,25 +325,88 @@ const Dashboard = () => {
           {/* Quick Actions */}
           <section className="bg-white/90 backdrop-blur-sm rounded-xl shadow-sm border border-white/20 p-6 relative z-10">
             <h3 className="text-xl font-semibold text-gray-900 mb-4">Quick Actions</h3>
-            <div className="flex flex-wrap gap-4">
+              <div className="flex flex-wrap gap-4">
               <Link to="/patient/ai-assistant">
                 <button className="bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-lg font-semibold transition-colors flex items-center space-x-2 hover:shadow-lg transform hover:-translate-y-0.5 transition-transform">
-                  <span>🤖</span>
+                  <span className="material-icons">smart_toy</span>
                   <span>AI Health Assistant</span>
                 </button>
               </Link>
+              
+              <button onClick={() => setShowAppointmentModal(true)} className="bg-purple-600 hover:bg-purple-700 text-white px-6 py-3 rounded-lg font-semibold transition-colors flex items-center space-x-2 hover:shadow-lg transform hover:-translate-y-0.5 transition-transform">
+                <span className="material-icons">event_available</span>
+                <span>Make Appointment</span>
+              </button>
 
               <button className="bg-orange-500 hover:bg-orange-600 text-white px-6 py-3 rounded-lg font-semibold transition-colors flex items-center space-x-2 hover:shadow-lg transform hover:-translate-y-0.5 transition-transform">
-                <span>🔗</span>
+                <span className="material-icons">link</span>
                 <span>Share Records</span>
               </button>
 
-              <button className="bg-purple-600 hover:bg-purple-700 text-white px-6 py-3 rounded-lg font-semibold transition-colors flex items-center space-x-2 hover:shadow-lg transform hover:-translate-y-0.5 transition-transform">
-                <span>📅</span>
+              <button className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-lg font-semibold transition-colors flex items-center space-x-2 hover:shadow-lg transform hover:-translate-y-0.5 transition-transform">
+                <span className="material-icons">event</span>
                 <span>Book Appointment</span>
               </button>
             </div>
           </section>
+
+          {/* Appointment Modal */}
+          {showAppointmentModal && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+              <div className="bg-white rounded-xl p-6 w-full max-w-xl mx-4">
+                <h3 className="text-xl font-semibold text-gray-900 mb-4">Make Appointment</h3>
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Doctor name or ID or Hospital</label>
+                    <input type="text" value={appointmentForm.doctor} onChange={e => setAppointmentForm({...appointmentForm, doctor: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-lg" placeholder="Dr. Smith or ID or Hospital" />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Basic reason</label>
+                    <textarea value={appointmentForm.reason} onChange={e => setAppointmentForm({...appointmentForm, reason: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-lg" rows={3} placeholder="Short reason for appointment"></textarea>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Which files to share with doctor</label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-40 overflow-auto border rounded-md p-2">
+                      {records.map(r => (
+                        <label key={r.id} className="flex items-center space-x-2">
+                          <input type="checkbox" checked={appointmentForm.fileIds.includes(r.id)} onChange={e => {
+                            const checked = e.target.checked;
+                            setAppointmentForm(prev => ({
+                              ...prev,
+                              fileIds: checked ? [...prev.fileIds, r.id] : prev.fileIds.filter(id => id !== r.id)
+                            }))
+                          }} />
+                          <span className="text-sm">{r.title} • {r.date}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Share mode</label>
+                    <div className="flex items-center space-x-4">
+                      <label className="flex items-center space-x-2"><input type="radio" name="mode" value="view" checked={appointmentForm.mode === 'view'} onChange={e => setAppointmentForm({...appointmentForm, mode: e.target.value})} /> <span>View</span></label>
+                      <label className="flex items-center space-x-2"><input type="radio" name="mode" value="edit" checked={appointmentForm.mode === 'edit'} onChange={e => setAppointmentForm({...appointmentForm, mode: e.target.value})} /> <span>Edit</span></label>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex gap-3 mt-6">
+                  <button onClick={() => setShowAppointmentModal(false)} className="flex-1 px-4 py-2 border border-gray-300 rounded-lg">Cancel</button>
+                  <button onClick={() => {
+                    // simple submit: store in-memory appointments and show confirmation
+                    setAppointments(prev => ([...prev, { id: prev.length + 1, ...appointmentForm, createdAt: new Date().toISOString() }]));
+                    setShowAppointmentModal(false);
+                    setAppointmentForm({ doctor: '', hospital: '', reason: '', fileIds: [], mode: 'view' });
+                    alert('Appointment requested — files will be shared with selected mode.');
+                  }} className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg">Request Appointment</button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Upload Modal */}
           {showUploadModal && (
@@ -268,14 +451,35 @@ const Dashboard = () => {
                     />
                   </div>
 
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Symptoms (optional)</label>
+                    <textarea
+                      value={newRecord.symptoms}
+                      onChange={(e) => setNewRecord({...newRecord, symptoms: e.target.value})}
+                      placeholder="Describe any symptoms related to this record (short notes)"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      rows={3}
+                    />
+                  </div>
+
                   <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
                     <svg className="w-12 h-12 text-gray-400 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                     </svg>
-                    <p className="text-gray-600 mb-2">Drag and drop your file here</p>
-                    <button className="text-blue-600 hover:text-blue-700 font-medium">
-                      Or click to browse
-                    </button>
+                    <p className="text-gray-600 mb-2">Drag and drop your file here or choose a file</p>
+                    <input type="file" onChange={handleFileSelect} accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" className="mx-auto" />
+                    {newRecord.file && (
+                      <p className="text-sm text-green-600 mt-2">Selected: {newRecord.file.name}</p>
+                    )}
+                    {uploadError && (
+                      <p className="text-sm text-red-600 mt-2">{uploadError}</p>
+                    )}
+                    {uploadSuccess && (
+                      <p className="text-sm text-green-600 mt-2">{uploadSuccess}</p>
+                    )}
+                    {uploadLoading && (
+                      <p className="text-sm text-gray-600 mt-2">Uploading…</p>
+                    )}
                   </div>
                 </div>
 
@@ -288,9 +492,10 @@ const Dashboard = () => {
                   </button>
                   <button
                     onClick={handleUpload}
-                    className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                    disabled={uploadLoading}
+                    className={`flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors ${uploadLoading ? 'opacity-60 cursor-not-allowed' : ''}`}
                   >
-                    Upload Record
+                    {uploadLoading ? 'Uploading...' : 'Upload Record'}
                   </button>
                 </div>
               </div>

@@ -8,6 +8,8 @@ import AIAssistant from '../pages/AIAssistant';
 import PatientLayout from '../layouts/PatientLayout';
 import DoctorLayout from '../layouts/DoctorLayout';
 import LabLayout from '../layouts/LabLayout';
+import HealthRecords from '../pages/patient/HealthRecords';
+import Appointment from '../pages/patient/Appointment';
 
 const routes = [
   { path: '/login', element: <Login /> },
@@ -18,6 +20,8 @@ const routes = [
     element: <PatientLayout />,
     children: [
       { path: '', element: <PatientDashboard /> },
+  { path: 'appointment', element: <Appointment /> },
+      { path: 'health-records', element: <HealthRecords /> },
       { path: 'ai-assistant', element: <AIAssistant /> },
     ],
   },

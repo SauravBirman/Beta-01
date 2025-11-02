@@ -2,13 +2,7 @@ import React, { useMemo, useState, useEffect } from 'react';
 import Navbar from '../../components/Navbar';
 import Slidebar from '../../components/Slidebar';
 
-const DUMMY = [
-  { id: 1, date: '2025-10-01', type: 'Lab', uploader: 'LabCorp', access: 'Dr. Smith', summary: 'Hemoglobin normal', size: '120KB' },
-  { id: 2, date: '2025-09-18', type: 'Imaging', uploader: 'City Hospital', access: 'Dr. Jones', summary: 'No acute findings', size: '3.2MB' },
-  { id: 3, date: '2025-08-20', type: 'Prescription', uploader: 'Dr. Smith', access: 'Pharmacy', summary: 'Amoxicillin 500mg', size: '8KB' },
-  { id: 4, date: '2025-07-12', type: 'Lab', uploader: 'QuickLabs', access: 'Dr. Smith', summary: 'Elevated cholesterol', size: '95KB' },
-  { id: 5, date: '2025-06-01', type: 'Imaging', uploader: 'Radiology Inc', access: 'Dr. Lee', summary: 'MRI - follow-up suggested', size: '4.6MB' },
-];
+// records will be fetched from the backend
 
 const typeColors = {
   Lab: 'bg-green-100 text-green-800 border-green-200',
@@ -17,9 +11,9 @@ const typeColors = {
 };
 
 const typeIcons = {
-  Lab: '🧪',
-  Prescription: '💊',
-  Imaging: '📷'
+  Lab: 'science',
+  Prescription: 'medical_services',
+  Imaging: 'image'
 };
 
 function formatDate(d) {
@@ -27,15 +21,26 @@ function formatDate(d) {
 }
 
 export default function HealthRecords() {
-  const [records] = useState(DUMMY);
+  const [records, setRecords] = useState([]);
+  const [recordsLoading, setRecordsLoading] = useState(false);
+  const [recordsError, setRecordsError] = useState('');
   const [query, setQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState('All');
   const [uploaderFilter, setUploaderFilter] = useState('All');
   const [viewMode, setViewMode] = useState('cards');
   const [selected, setSelected] = useState(null);
+  const [shareModalOpen, setShareModalOpen] = useState(false);
+  const [shareReport, setShareReport] = useState(null);
+  const [doctorQuery, setDoctorQuery] = useState('');
+  const [doctorResults, setDoctorResults] = useState([]);
+  const [selectedDoctor, setSelectedDoctor] = useState(null);
+  const [sharing, setSharing] = useState(false);
+  const [shareError, setShareError] = useState('');
+  const [shareSuccess, setShareSuccess] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [downloadingId, setDownloadingId] = useState(null);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -45,6 +50,202 @@ export default function HealthRecords() {
   }, []);
 
   const uploaders = useMemo(() => Array.from(new Set(records.map(r => r.uploader))), [records]);
+
+  useEffect(() => {
+    let mounted = true;
+    const load = async () => {
+      setRecordsLoading(true);
+      setRecordsError('');
+      try {
+        const token = localStorage.getItem('token');
+        const res = await fetch('http://localhost:5000/api/reports/me', {
+          headers: token ? { Authorization: `Bearer ${token}` } : {}
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(json.message || `Failed to load (${res.status})`);
+        const items = (json.reports || json.data || json || []).map((r, idx) => ({
+          id: r._id || r.id || idx + 1,
+          date: (r.createdAt || r.date || '').slice(0,10) || new Date().toISOString().split('T')[0],
+          type: r.type || 'Lab',
+          uploader: r.uploader || r.uploaderName || 'Unknown',
+          access: r.access || 'You',
+          summary: r.summary || r.fileName || r.name || 'Report',
+          size: r.size || r.fileSize || ''
+        }));
+        if (mounted) setRecords(items);
+      } catch (err) {
+        console.error('Failed to load records', err);
+        if (mounted) setRecordsError(err.message || 'Failed to load records');
+      } finally {
+        if (mounted) setRecordsLoading(false);
+      }
+    };
+
+    load();
+    return () => { mounted = false; };
+  }, []);
+
+  // Download a report by id using the backend endpoint
+  const handleDownload = async (report) => {
+    if (!report || !report.id) return;
+    setDownloadingId(report.id);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`http://localhost:5000/api/reports/${report.id}/download`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+
+      const contentType = res.headers.get('content-type') || '';
+
+      // If backend returns JSON (current implementation returns { ipfsHash, fileName })
+      if (contentType.includes('application/json')) {
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(json.message || `Download failed (${res.status})`);
+        if (json.ipfsHash) {
+          // Open the public IPFS gateway for the returned hash
+          const url = `https://ipfs.io/ipfs/${json.ipfsHash}`;
+          // open in a new tab (this is a user-initiated click so should be allowed)
+          window.open(url, '_blank');
+        } else {
+          throw new Error('No file reference returned from server');
+        }
+      } else {
+        // Assume binary/stream response — download as blob
+        if (!res.ok) {
+          const text = await res.text().catch(() => '');
+          throw new Error(text || `Download failed (${res.status})`);
+        }
+        const blob = await res.blob();
+        // Try to get filename from content-disposition header, fallback to report.summary
+        const cd = res.headers.get('content-disposition') || '';
+        let filename = report.summary || 'report';
+        const match = cd.match(/filename\*=UTF-8''([^;\n]+)/) || cd.match(/filename="?([^";\n]+)"?/);
+        if (match && match[1]) filename = decodeURIComponent(match[1]);
+
+        const href = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = href;
+        a.download = filename.replace(/\"/g, '');
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(href);
+      }
+    } catch (err) {
+      console.error('Download error', err);
+      setRecordsError(err.message || 'Failed to download report');
+    } finally {
+      setDownloadingId(null);
+    }
+  };
+
+  // Open share modal for a report
+  const openShareModal = (report) => {
+    setShareReport(report);
+    setShareModalOpen(true);
+    setDoctorQuery('');
+    setDoctorResults([]);
+    setSelectedDoctor(null);
+    setShareError('');
+    setShareSuccess('');
+    // Load full doctor list when opening modal
+    loadDoctors();
+  };
+
+  const closeShareModal = () => {
+    setShareModalOpen(false);
+    setShareReport(null);
+    setDoctorQuery('');
+    setDoctorResults([]);
+    setSelectedDoctor(null);
+    setShareError('');
+    setShareSuccess('');
+  };
+
+  // Try to search doctors from server (best-effort). If server doesn't support, allow manual id entry.
+  const searchDoctors = async () => {
+    setShareError('');
+    setDoctorResults([]);
+    if (!doctorQuery) return;
+    try {
+      const token = localStorage.getItem('token');
+      const url = `http://localhost:5000/api/users?search=${encodeURIComponent(doctorQuery)}&role=doctor`;
+      const res = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.message || `Search failed (${res.status})`);
+      // Accept either json.users, json.data, or raw array
+      const list = json.users || json.data || json || [];
+      setDoctorResults(Array.isArray(list) ? list : []);
+    } catch (err) {
+      // Not fatal: show message and allow manual ID entry
+      console.warn('Doctor search failed', err);
+      setShareError('Search failed — you can still share using the doctor ID');
+    }
+  };
+
+  // Load all doctors (used when opening the share modal)
+  const loadDoctors = async () => {
+    setShareError('');
+    setDoctorResults([]);
+    try {
+      const token = localStorage.getItem('token');
+      // best-effort endpoint: server should accept role=doctor to list doctors
+      const url = `http://localhost:5000/api/users?role=doctor`;
+      const res = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.message || `Failed to load doctors (${res.status})`);
+      const list = json.users || json.data || json || [];
+      setDoctorResults(Array.isArray(list) ? list : []);
+    } catch (err) {
+      console.warn('Failed to load doctors', err);
+      setShareError('Unable to load doctors — you can still share using the doctor ID');
+    }
+  };
+
+  const confirmShare = async () => {
+    if (!shareReport) return;
+    // Prefer the doctor's blockchain address. If user selected a doctor from the list,
+    // that object should include `blockchainAddress` (populated by the server).
+    let doctorAddress = '';
+    if (selectedDoctor) doctorAddress = selectedDoctor.blockchainAddress || selectedDoctor._id || selectedDoctor.id || '';
+    if (!doctorAddress && doctorQuery) doctorAddress = doctorQuery;
+
+    // Basic validation: require an Ethereum-style address (0x...) when possible.
+    const looksLikeAddress = typeof doctorAddress === 'string' && doctorAddress.startsWith('0x') && doctorAddress.length === 42;
+    if (!doctorAddress || !looksLikeAddress) {
+      setShareError('Please select a doctor from the list or enter their wallet address (0x...)');
+      return;
+    }
+    setSharing(true);
+    setShareError('');
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch('http://localhost:5000/api/reports/grant', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({ reportId: shareReport.id, doctorAddress })
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.message || `Share failed (${res.status})`);
+
+      // Update local UI to reflect sharing
+      setRecords(prev => prev.map(r => r.id === shareReport.id ? { ...r, access: `Shared with ${selectedDoctor?.name || doctorAddress}` } : r));
+      setShareSuccess('Report shared successfully');
+
+      // Optionally close modal after a short delay
+      setTimeout(() => {
+        closeShareModal();
+      }, 900);
+    } catch (err) {
+      console.error('Share error', err);
+      setShareError(err.message || 'Failed to share report');
+    } finally {
+      setSharing(false);
+    }
+  };
 
   const filtered = useMemo(() => {
     return records.filter(r => {
@@ -114,7 +315,7 @@ export default function HealthRecords() {
                   }`}
                 >
                   <div className="flex items-center space-x-2">
-                    <span>📄</span>
+                    <span className="material-icons">description</span>
                     <span>Cards</span>
                   </div>
                 </button>
@@ -127,7 +328,7 @@ export default function HealthRecords() {
                   }`}
                 >
                   <div className="flex items-center space-x-2">
-                    <span>📊</span>
+                    <span className="material-icons">table_chart</span>
                     <span>Table</span>
                   </div>
                 </button>
@@ -139,7 +340,7 @@ export default function HealthRecords() {
               <div className="flex flex-wrap gap-4 items-center">
                 <div className="relative flex-1 min-w-72">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <span className="text-gray-400">🔍</span>
+                    <span className="material-icons text-gray-400">search</span>
                   </div>
                   <input
                     type="search"
@@ -195,9 +396,13 @@ export default function HealthRecords() {
 
             {/* Results Count */}
             <div className="flex items-center justify-between mb-6">
-              <p className="text-gray-600">
-                Showing <span className="font-semibold text-gray-900">{filtered.length}</span> of <span className="font-semibold text-gray-900">{records.length}</span> records
-              </p>
+              <div className="flex items-center gap-4">
+                <p className="text-gray-600">
+                  Showing <span className="font-semibold text-gray-900">{filtered.length}</span> of <span className="font-semibold text-gray-900">{records.length}</span> records
+                </p>
+                {recordsLoading && <span className="text-sm text-gray-500">Loading…</span>}
+                {recordsError && <span className="text-sm text-red-600">{recordsError}</span>}
+              </div>
             </div>
 
             {/* Content */}
@@ -210,7 +415,7 @@ export default function HealthRecords() {
                   >
                     <div className="flex items-start justify-between mb-4">
                       <div className="flex items-center space-x-3">
-                        <span className="text-2xl">{typeIcons[r.type]}</span>
+                        <span className="material-icons text-2xl">{typeIcons[r.type]}</span>
                         <span className={`inline-block px-3 py-1 rounded-full text-xs font-medium border ${typeColors[r.type]}`}>
                           {r.type}
                         </span>
@@ -224,15 +429,15 @@ export default function HealthRecords() {
                     
                     <div className="space-y-2 mb-4">
                       <p className="text-sm text-gray-600 flex items-center">
-                        <span className="mr-2">📅</span>
+                        <span className="material-icons mr-2 text-base">calendar_today</span>
                         Uploaded {formatDate(r.date)}
                       </p>
                       <p className="text-sm text-gray-600 flex items-center">
-                        <span className="mr-2">👤</span>
+                        <span className="material-icons mr-2 text-base">person</span>
                         {r.uploader}
                       </p>
                       <p className="text-sm text-gray-600 flex items-center">
-                        <span className="mr-2">🔒</span>
+                        <span className="material-icons mr-2 text-base">lock</span>
                         Access: {r.access}
                       </p>
                     </div>
@@ -244,11 +449,15 @@ export default function HealthRecords() {
                       >
                         View Details
                       </button>
-                      <button className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
-                        <span className="text-lg">⬇️</span>
+                      <button onClick={() => handleDownload(r)} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
+                        {downloadingId === r.id ? (
+                          <span className="text-sm text-gray-600">Downloading…</span>
+                        ) : (
+                          <span className="material-icons">download</span>
+                        )}
                       </button>
-                      <button className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
-                        <span className="text-lg">🔗</span>
+                      <button onClick={() => openShareModal(r)} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
+                        <span className="material-icons">link</span>
                       </button>
                     </div>
                   </article>
@@ -272,7 +481,8 @@ export default function HealthRecords() {
                         <td className="px-6 py-4 text-sm text-gray-700 font-medium">{formatDate(r.date)}</td>
                         <td className="px-6 py-4 text-sm">
                           <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium border ${typeColors[r.type]}`}>
-                            {typeIcons[r.type]} {r.type}
+                            <span className="material-icons text-sm mr-1">{typeIcons[r.type]}</span>
+                            {r.type}
                           </span>
                         </td>
                         <td className="px-6 py-4 text-sm text-gray-900 font-medium">{r.summary}</td>
@@ -285,11 +495,15 @@ export default function HealthRecords() {
                             >
                               View
                             </button>
-                            <button className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
-                              <span className="text-lg">⬇️</span>
+                            <button onClick={() => handleDownload(r)} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
+                              {downloadingId === r.id ? (
+                                <span className="text-sm text-gray-600">Downloading…</span>
+                              ) : (
+                                <span className="material-icons">download</span>
+                              )}
                             </button>
-                            <button className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
-                              <span className="text-lg">🔗</span>
+                            <button onClick={() => openShareModal(r)} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
+                              <span className="material-icons">link</span>
                             </button>
                           </div>
                         </td>
@@ -303,7 +517,7 @@ export default function HealthRecords() {
             {/* Empty State */}
             {filtered.length === 0 && (
               <div className="text-center py-12">
-                <div className="text-6xl mb-4">📋</div>
+                <div className="text-6xl mb-4"><span className="material-icons">description</span></div>
                 <h3 className="text-xl font-semibold text-gray-900 mb-2">No records found</h3>
                 <p className="text-gray-600">Try adjusting your filters or search terms</p>
               </div>
@@ -316,7 +530,7 @@ export default function HealthRecords() {
                   <div className="flex justify-between items-start mb-6">
                     <div>
                       <div className="flex items-center space-x-3 mb-2">
-                        <span className="text-2xl">{typeIcons[selected.type]}</span>
+                        <span className="material-icons text-2xl">{typeIcons[selected.type]}</span>
                         <span className={`inline-block px-3 py-1 rounded-full text-xs font-medium border ${typeColors[selected.type]}`}>
                           {selected.type}
                         </span>
@@ -330,7 +544,7 @@ export default function HealthRecords() {
                       onClick={() => setSelected(null)} 
                       className="text-gray-400 hover:text-gray-600 text-2xl transition-colors"
                     >
-                      ✕
+                      <span className="material-icons">close</span>
                     </button>
                   </div>
 
@@ -346,17 +560,75 @@ export default function HealthRecords() {
 
                   <div className="flex gap-3">
                     <button className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 px-4 rounded-xl font-semibold transition-colors flex items-center justify-center space-x-2">
-                      <span>⬇️</span>
+                      <span className="material-icons">download</span>
                       <span>Download</span>
                     </button>
                     <button className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 px-4 rounded-xl font-semibold transition-colors flex items-center justify-center space-x-2">
-                      <span>🔗</span>
+                      <span className="material-icons">link</span>
                       <span>Share</span>
                     </button>
                   </div>
                 </div>
               </div>
             )}
+
+              {/* Share Modal */}
+              {shareModalOpen && (
+                <div className="fixed inset-0 z-60 flex items-center justify-center bg-black bg-opacity-50">
+                  <div className="bg-white rounded-2xl p-6 w-full max-w-lg mx-4 shadow-2xl transform transition-all duration-300 scale-100">
+                    <div className="flex justify-between items-center mb-4">
+                      <h3 className="text-xl font-semibold">Share report with a doctor</h3>
+                      <button onClick={closeShareModal} className="text-gray-400 hover:text-gray-600 text-2xl transition-colors">
+                        <span className="material-icons">close</span>
+                      </button>
+                    </div>
+
+                    <p className="text-sm text-gray-600 mb-4">Enter the doctor's ID or search by name/ID. The doctor will receive a notification when the report is shared.</p>
+
+                    <div className="space-y-3">
+                      <div>
+                        <label className="text-sm font-medium text-gray-700">Search doctor</label>
+                        <div className="flex mt-2">
+                          <input
+                            type="search"
+                            value={doctorQuery}
+                            onChange={e => { setDoctorQuery(e.target.value); setSelectedDoctor(null); setShareError(''); setShareSuccess(''); }}
+                            placeholder="Doctor ID or name"
+                            className="flex-1 px-4 py-3 border border-gray-200 rounded-l-xl focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          />
+                          <button onClick={searchDoctors} className="px-4 py-3 bg-blue-600 text-white rounded-r-xl">Search</button>
+                        </div>
+                      </div>
+
+                      {doctorResults.length > 0 && (
+                        <div className="max-h-40 overflow-auto border border-gray-100 rounded-lg p-2">
+                          {doctorResults.map(d => (
+                            <div key={d.id || d._id} className={`p-2 rounded-lg hover:bg-gray-50 cursor-pointer flex items-center justify-between ${selectedDoctor && (selectedDoctor.id === (d._id || d.id) || selectedDoctor._id === (d._id || d.id)) ? 'bg-blue-50 border border-blue-100' : ''}`} onClick={() => setSelectedDoctor(d)}>
+                              <div>
+                                <div className="text-sm font-medium text-gray-900">{d.name || d.fullName || d.username || d._id}</div>
+                                {/* <div className="text-xs text-gray-500">{d._id || d.id}</div> */}
+                              </div>
+                              <div className="text-sm text-gray-500">{d.specialty || ''}</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="text-sm text-gray-600">Or proceed with the entered ID: <span className="font-medium text-gray-900">{doctorQuery}</span></div>
+
+                      {shareError && <div className="text-sm text-red-600">{shareError}</div>}
+                      {shareSuccess && <div className="text-sm text-green-600">{shareSuccess}</div>}
+
+                      <div className="flex items-center gap-3 mt-4">
+                        <button onClick={confirmShare} disabled={sharing} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 px-4 rounded-xl font-semibold transition-colors">
+                          {sharing ? 'Sharing…' : 'Share Report'}
+                        </button>
+                        <button onClick={closeShareModal} className="px-4 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl">Cancel</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
           </div>
         </main>
       </div>

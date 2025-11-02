@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 const Navbar = ({ companyName = "MedChain" }) => {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
@@ -11,6 +12,35 @@ const Navbar = ({ companyName = "MedChain" }) => {
   ];
 
   const unreadCount = notifications.filter(n => n.unread).length;
+
+  const [user, setUser] = useState({ name: 'John Doe', email: '', role: '' });
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('userData');
+      if (raw) {
+        const u = JSON.parse(raw);
+        setUser({ name: u.name || `${u.firstName || ''} ${u.lastName || ''}`.trim() || 'John Doe', email: u.email || '', role: u.role || '' });
+      } else {
+        // fallback to token-derived role if present
+        const r = localStorage.getItem('userRole');
+        if (r) setUser(u => ({ ...u, role: r }));
+      }
+    } catch (e) {
+      // ignore
+    }
+  }, []);
+
+  const handleSignOut = () => {
+    // clear auth and user data
+    try {
+      localStorage.removeItem('token');
+      localStorage.removeItem('userData');
+      localStorage.removeItem('userRole');
+    } catch (e) {}
+    navigate('/login');
+  };
 
   return (
     <nav className="bg-white border-b border-gray-200 sticky top-0 z-50 shadow-sm">
@@ -102,8 +132,8 @@ const Navbar = ({ companyName = "MedChain" }) => {
               >
                 <span className="material-icons text-gray-700" style={{ fontSize: 28 }}>account_circle</span>
                 <div className="hidden md:block text-left">
-                  <p className="text-sm font-medium text-gray-900">John Doe</p>
-                  <p className="text-xs text-gray-500">Doctor</p>
+                  <p className="text-sm font-medium text-gray-900">{user.name}</p>
+                  <p className="text-xs text-gray-500">{user.role || 'User'}</p>
                 </div>
                 <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
@@ -114,8 +144,8 @@ const Navbar = ({ companyName = "MedChain" }) => {
               {isProfileOpen && (
                 <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-2 z-50">
                   <div className="px-4 py-2 border-b border-gray-100">
-                    <p className="text-sm font-medium text-gray-900">John Doe</p>
-                    <p className="text-xs text-gray-500">john.doe@medchain.com</p>
+                    <p className="text-sm font-medium text-gray-900">{user.name}</p>
+                    <p className="text-xs text-gray-500">{user.email || ''}</p>
                   </div>
                   <div className="py-2">
                     <a href="#" className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Profile</a>
@@ -123,7 +153,7 @@ const Navbar = ({ companyName = "MedChain" }) => {
                     <a href="#" className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Help & Support</a>
                   </div>
                   <div className="border-t border-gray-100 pt-2">
-                    <button className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100">
+                    <button onClick={handleSignOut} className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100">
                       Sign out
                     </button>
                   </div>

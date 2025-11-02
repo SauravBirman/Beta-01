@@ -6,20 +6,21 @@ const Sidebar = ({ role = 'patient' }) => {
   const location = useLocation();
 
   const menuItems = {
-    patient: [
-      { name: 'Dashboard', icon: 'dashboard', path: '/patient/dashboard' },
+      patient: [
+      { name: 'Dashboard', icon: 'dashboard', path: '/patient' },
       { name: 'Health Records', icon: 'folder_open', path: '/patient/health-records' },
       { name: 'AI Assistant', icon: 'smart_toy', path: '/patient/ai-assistant' },
+      { name: 'Appointment', icon: 'event', path: '/patient/appointment' },
       { name: 'Share Records', icon: 'share', path: '/patient/share-records' },
     ],
     doctor: [
-      { name: 'Dashboard', icon: 'dashboard', path: '/doctor/dashboard' },
+      { name: 'Dashboard', icon: 'dashboard', path: '/doctor' },
       { name: 'Patient Summaries', icon: 'people', path: '/doctor/patient-summaries' },
       { name: 'Alerts', icon: 'warning', path: '/doctor/alerts' },
       { name: 'Schedule', icon: 'calendar_month', path: '/doctor/schedule' },
     ],
     lab: [
-      { name: 'Dashboard', icon: 'dashboard', path: '/lab/dashboard' },
+      { name: 'Dashboard', icon: 'dashboard', path: '/lab' },
       { name: 'Upload Reports', icon: 'upload_file', path: '/lab/upload-reports' },
       { name: 'Test Results', icon: 'science', path: '/lab/test-results' },
       { name: 'Quality Control', icon: 'check_circle', path: '/lab/quality-control' },
@@ -148,24 +149,6 @@ const Sidebar = ({ role = 'patient' }) => {
       <div className={`absolute bottom-6 left-6 right-6 ${
         isCollapsed ? 'flex justify-center' : ''
       }`}>
-        <div className={`flex items-center ${isCollapsed ? 'justify-center' : 'justify-between'} w-full`}>
-          {!isCollapsed && (
-            <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-blue-600 rounded-full flex items-center justify-center">
-                <span className="text-white font-semibold text-sm">JD</span>
-              </div>
-              <div>
-                <p className="text-gray-900 font-medium text-sm">John Doe</p>
-                <p className="text-gray-500 text-xs capitalize">{role}</p>
-              </div>
-            </div>
-          )}
-          {isCollapsed && (
-            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-blue-600 rounded-full flex items-center justify-center">
-              <span className="text-white font-semibold text-sm">JD</span>
-            </div>
-          )}
-        </div>
       </div>
     </div>
   );
