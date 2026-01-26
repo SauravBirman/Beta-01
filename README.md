@@ -1,6 +1,5 @@
 # Beta-01
 
-# Beta-01
 
 A full-stack healthcare application with blockchain integration for secure medical records management.
 
